@@ -1,6 +1,6 @@
 # Releasing copernicus
 
-This checklist takes a version from the working tree to a published release. The steps that publish (the upload to a package index, the public repository, the documentation site) are done by hand by a maintainer; nothing here runs them.
+This checklist takes a version from the working tree to a published release. The steps that publish (the upload to a package index, the push to the public repository) are done by hand by a maintainer; nothing here runs them. The documentation site is the exception: it is published by the `docs` workflow on every push to `main` of the public repository.
 
 ## 1. Before you start
 
@@ -18,6 +18,8 @@ Run the full suite once. It includes the tests marked `embed`, which need the `e
 ```
 
 The continuous-integration workflow in `.github/workflows/ci.yml` runs a smaller selection. The `test` job runs `pytest -q -m "not embed and not slow"` on Python 3.10 and 3.12, together with `ruff` and `mypy src`; the 3.12 leg also installs the `docs` extra and runs `mkdocs build --strict`, and the documentation build test skips itself on 3.10. The `slow` job runs `pytest -q -m "slow and not embed"` on Python 3.12. Neither job installs `torch`, so the tests marked `embed` never run there, and the documentation pages whose blocks are tagged `run embed` are skipped with a reason that names the page. Run the full suite locally before every release.
+
+The workflow in `.github/workflows/docs.yml` builds the site with `mkdocs build --strict` on Python 3.12 with the `docs` extra and deploys it through GitHub Pages on every push to `main`; it runs no test.
 
 ## 2. Bump the version
 
@@ -40,7 +42,7 @@ Building the documentation needs Python 3.11 or later; the library itself runs o
 NO_MKDOCS_2_WARNING=1 .venv/bin/mkdocs build --strict -d /tmp/site
 ```
 
-The build must finish without a warning. This build is a check: the site that is published is built in the export (section 5), after the placeholders are replaced.
+The build must finish without a warning. This build is a check: the site that is published is built by the `docs` workflow on the runner, from the pushed export (section 4), after the placeholders are replaced.
 
 ## 4. Anonymity export
 
@@ -92,7 +94,7 @@ The accompanying methods paper is under review, so the public repository must ho
 
    The last command must show `Author names withheld <withheld@example.invalid>` twice and times that end in `Z` or `+00:00`. Make every later commit of the export the same way.
 
-The workflow in `.github/workflows/ci.yml` runs only once `library/` is the root of a repository, which is the case in the export and not in the research repository, where GitHub does not read workflows below the root. Push the export, open the Actions tab, and confirm that both jobs are green before tagging.
+The workflow in `.github/workflows/ci.yml` runs only once `library/` is the root of a repository, which is the case in the export and not in the research repository, where GitHub does not read workflows below the root. Push the export, open the Actions tab, and confirm that both jobs of `ci` and the `docs` run are green before tagging.
 
 ## 5. Build and inspect the distributions
 
@@ -134,7 +136,7 @@ python -m venv /tmp/release-check
 /tmp/release-check/bin/copernicus --help
 ```
 
-Build the site to publish here as well, with `mkdocs build --strict` in the export, once `mkdocs.yml` carries `site_url` and `repo_url`.
+Check the build of the site in the export as well, with `NO_MKDOCS_2_WARNING=1 mkdocs build --strict -d /tmp/site-export` once `mkdocs.yml` carries `site_url` and `repo_url`. The runner builds the site that is published, from the same files, so this build is a check and deploys nothing.
 
 ## 6. Tag and publish
 
@@ -142,5 +144,5 @@ Publishing is not part of this checklist; a maintainer does it after the steps a
 
 1. Tag the commit of the export: `git tag v<version>` and push the tag. A tag made this way carries no identity; an annotated tag would record the tagger.
 2. Upload `dist/*` to the package index under the project's publishing account, never a personal one, with a token that is stored outside the repository (never in a workflow file or in the working tree). The name was checked in section 4, before the export.
-3. Deploy the site built in the export to the documentation host.
+3. The documentation site needs no step of its own: the push to `main` deploys the site through the `docs` workflow. The Pages source "GitHub Actions" was set once through the repository's API, and nothing is repeated per release.
 4. Add a heading for the next version to `CHANGELOG.md` only when its first change lands.

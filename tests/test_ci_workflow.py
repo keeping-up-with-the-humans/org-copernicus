@@ -10,10 +10,12 @@ from typing import Any
 
 import pytest
 from ci_support import (
+    DOCS_WORKFLOW,
     EMBED_MARKER,
     LIBRARY_ROOT,
     TESTS,
     WORKFLOW,
+    docs_workflow,
     pyproject_text,
     workflow,
 )
@@ -26,6 +28,11 @@ LINT_COMMANDS = (
     "mypy src",
 )
 DOCS_MARKER = '; python_version >= "3.11"'
+PAGES_ACTIONS = (
+    "actions/configure-pages",
+    "actions/upload-pages-artifact",
+    "actions/deploy-pages",
+)
 
 
 def triggers(parsed: dict[str, Any]) -> dict[str, Any] | list[str] | str:
@@ -234,3 +241,68 @@ def test_the_help_tests_pass_where_the_runner_forces_the_terminal_rendering_of_t
         timeout=300,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_docs_workflow_runs_on_push_to_main_and_on_manual_dispatch_only() -> None:
+    trigger = triggers(docs_workflow())
+    assert isinstance(trigger, dict)
+    assert set(trigger) == {"push", "workflow_dispatch"}
+    assert trigger["push"] == {"branches": ["main"]}
+
+
+def test_the_docs_workflow_may_only_read_the_code_and_deploy_to_pages() -> None:
+    parsed = docs_workflow()
+    assert parsed["permissions"] == {"contents": "read", "pages": "write", "id-token": "write"}
+    assert all("permissions" not in job for job in parsed["jobs"].values())
+
+
+def test_the_docs_workflow_has_one_deploy_job_in_the_github_pages_environment() -> None:
+    jobs = docs_workflow()["jobs"]
+    assert set(jobs) == {"deploy"}
+    job = jobs["deploy"]
+    assert job["runs-on"] == "ubuntu-latest"
+    assert job["environment"] == {
+        "name": "github-pages",
+        "url": "${{ steps.deployment.outputs.page_url }}",
+    }
+    deployment = [step for step in job["steps"] if step.get("id") == "deployment"]
+    assert [step["uses"].split("@")[0] for step in deployment] == ["actions/deploy-pages"]
+
+
+def test_the_docs_workflow_builds_the_site_strictly_on_python_3_12_with_the_docs_extra() -> None:
+    job = docs_workflow()["jobs"]["deploy"]
+    setup = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/setup"))
+    assert setup["with"]["python-version"] == "3.12"
+    assert run_commands(job) == ['pip install -e ".[docs]"', "mkdocs build --strict"]
+
+
+def test_the_docs_workflow_uploads_the_site_and_deploys_it_after_the_build() -> None:
+    job = docs_workflow()["jobs"]["deploy"]
+    steps = job["steps"]
+    build = next(i for i, step in enumerate(steps) if step.get("run") == "mkdocs build --strict")
+    pages = [(i, s) for i, s in enumerate(steps) if s.get("uses", "").startswith(PAGES_ACTIONS)]
+    assert [step["uses"].split("@")[0] for _, step in pages] == list(PAGES_ACTIONS)
+    assert all(i > build for i, _ in pages)
+    upload = next(step for _, step in pages if "upload-pages-artifact" in step["uses"])
+    assert upload["with"] == {"path": "site"}
+    assert [action.split("@")[0] for action in uses(job)[:2]] == [
+        "actions/checkout",
+        "actions/setup-python",
+    ]
+
+
+def test_every_action_of_the_docs_workflow_is_pinned_to_a_major_version() -> None:
+    job = docs_workflow()["jobs"]["deploy"]
+    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@v\d+", action) for action in uses(job))
+    assert len(uses(job)) == 5
+
+
+def test_the_docs_workflow_sets_the_same_environment_as_ci_and_references_no_secret() -> None:
+    parsed = docs_workflow()
+    assert parsed["env"] == workflow()["env"] == {"NO_MKDOCS_2_WARNING": "1", "HF_HUB_OFFLINE": "1"}
+    text = DOCS_WORKFLOW.read_text(encoding="utf-8")
+    assert "secrets." not in text and "${{ secrets" not in text
+
+
+def test_a_running_deployment_is_never_cancelled_half_way() -> None:
+    assert docs_workflow()["concurrency"] == {"group": "pages", "cancel-in-progress": False}

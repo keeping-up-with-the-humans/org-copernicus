@@ -141,3 +141,34 @@ def test_the_guard_run_checks_the_site_built_in_the_documentation_section() -> N
 def test_the_upload_uses_the_project_account() -> None:
     publish = releasing_section("Tag and publish")
     assert "never a personal one" in publish
+
+
+def test_the_docs_workflow_publishes_the_site_while_the_upload_stays_by_hand() -> None:
+    introduction = RELEASING.read_text(encoding="utf-8").split("\n## 1.")[0]
+    assert "published by the `docs` workflow on every push to `main`" in introduction
+    assert "the upload to a package index" in introduction
+    assert "done by hand by a maintainer" in introduction
+    assert "the documentation site) are done by hand" not in introduction
+
+
+def test_the_checklist_describes_both_workflows_and_the_site_check_as_a_check() -> None:
+    before = releasing_section("Before you start")
+    assert "`.github/workflows/ci.yml`" in before and "`.github/workflows/docs.yml`" in before
+    assert "builds the site with `mkdocs build --strict` on Python 3.12" in before
+    assert "deploys it through GitHub Pages on every push to `main`" in before
+    documentation = releasing_section("Check the documentation build")
+    assert "built by the `docs` workflow" in documentation
+    assert "the site that is published is built in the export" not in documentation
+    build = releasing_section("Build and inspect the distributions")
+    assert "Build the site to publish here as well" not in build
+    assert "runner builds the site that is published" in build
+
+
+def test_the_push_to_main_deploys_the_site_and_the_pages_source_is_set_once() -> None:
+    publish = releasing_section("Tag and publish")
+    assert "Deploy the site built in the export" not in publish
+    assert "the push to `main` deploys the site through the `docs` workflow" in publish
+    assert 'The Pages source "GitHub Actions" was set once through the repository\'s API' in publish
+    assert "nothing is repeated per release" in publish
+    export = releasing_section("Anonymity export")
+    assert "confirm that both jobs of `ci` and the `docs` run are green" in export
