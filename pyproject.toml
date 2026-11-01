@@ -1,0 +1,106 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "org-copernicus"
+dynamic = ["version"]
+description = "Rubric-based coding of constructs from text with LLM, similarity and hybrid coders, a validity panel against human gold values, an NLP-ML baseline, and corrections for the bias of the estimates built from the scores"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Author names withheld"}]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "pyarrow>=14",
+    "scipy>=1.10",
+    "scikit-learn>=1.3",
+    "jinja2>=3.1",
+    "rapidfuzz>=3.0",
+    "jsonschema>=4.18",
+    "openai>=3",
+    "typer>=0.12",
+    "tqdm>=4.60",
+    "formulaic>=1.0",
+]
+
+[project.urls]
+Documentation = "https://keeping-up-with-the-humans.github.io/org-copernicus/"
+Source = "https://github.com/keeping-up-with-the-humans/org-copernicus"
+
+[project.optional-dependencies]
+embed = ["torch>=2.1", "transformers>=4.56", "safetensors>=0.4"]
+vllm = ["vllm>=0.8"]
+docs = ['mkdocs-material>=9.8; python_version >= "3.11"', 'mkdocstrings[python]>=1.0.8; python_version >= "3.11"']
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "ruff>=0.5",
+    "mypy>=1.10",
+    "hypothesis>=6",
+    "pyyaml>=6",
+    "build>=1.0",
+    "hatchling>=1.27",
+    'tomli>=2; python_version < "3.11"',
+]
+
+[project.scripts]
+copernicus = "copernicus.cli.app:app"
+
+[tool.hatch.version]
+path = "src/copernicus/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/copernicus"]
+
+# The source distribution holds the tracked files only, so outputs that a run leaves in this
+# folder (tables, sidecars, notes) never ship.
+[tool.hatch.build.targets.sdist]
+only-include = [
+    ".github",
+    ".gitignore",
+    "CHANGELOG.md",
+    "CITATION.cff",
+    "LICENSE",
+    "README.md",
+    "RELEASING.md",
+    "docs",
+    "examples",
+    "mkdocs.yml",
+    "pyproject.toml",
+    "src/copernicus",
+    "tests",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [
+    "tests",
+    "tests/baseline",
+    "tests/cli",
+    "tests/coders",
+    "tests/corrections",
+    "tests/embeddings",
+    "tests/hybrid",
+    "tests/llm",
+    "tests/references",
+    "tests/similarity",
+    "tests/validity",
+]
+markers = [
+    "slow: a test that takes seconds (a Monte Carlo run, the docs build, the example); CI runs it in the slow job, and `-m \"not slow\"` leaves it out",
+    "embed: a test that needs torch or the MiniLM weights; CI installs neither, so it runs only where the embed extra is installed",
+]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true

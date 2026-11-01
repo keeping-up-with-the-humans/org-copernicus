@@ -1,0 +1,157 @@
+"""Corrections of machine scores with a human-coded sample.
+
+The data container, the human-sample draw with its inclusion probabilities and its draw file,
+the sample-size planner, the correction families behind one interface with their registry,
+grouped cross-fitting, the estimate-level estimators (prediction-powered means, differences and
+OLS coefficients, moment subtraction, SIMEX, instrumented coding), the repeated-study check and
+the battery that compares the score-level corrections out of sample. The module does not import
+scikit-learn, formulaic or torch at import time.
+"""
+
+from copernicus.corrections.battery import (
+    RAW_COLUMNS,
+    RESULT_COLUMNS,
+    SKIPPED_COLUMNS,
+    SUMMARY_COLUMNS,
+    BatteryResult,
+    run_battery,
+    summarize_battery,
+)
+from copernicus.corrections.battery_settings import BatteryEntry, BatterySettings
+from copernicus.corrections.crossfit import (
+    HOLDOUT_BAND,
+    HOLDOUT_SHARE,
+    INNER_FOLDS,
+    MIN_TRAIN,
+    cross_fit_predictions,
+    grouped_folds,
+    holdout_split,
+    inner_k,
+    inner_splits,
+)
+from copernicus.corrections.data import (
+    CorrectionData,
+    best_score_column,
+    minmax_apply,
+    minmax_fit,
+    scale_test,
+)
+from copernicus.corrections.draw_files import read_draw, write_draw
+from copernicus.corrections.estimates import (
+    Estimate,
+    group_difference_ppi,
+    long_short_split,
+    mean_ppi,
+)
+from copernicus.corrections.estimates_classical import moment_subtraction, simex
+from copernicus.corrections.estimates_ols import ols_outcome_ppi, ols_predictor_ppi
+from copernicus.corrections.estimates_oriv import oriv
+from copernicus.corrections.families import (
+    REGISTRY,
+    ClassicalScore,
+    CorrectionEnsemble,
+    EmbeddingAugmented,
+    EnsembleResult,
+    FamilySpec,
+    Fitted,
+    LatentPooling,
+    LinePredictor,
+    MarginalMatching,
+    MisclassificationMatrix,
+    MultipleImputation,
+    PooledEstimate,
+    PseudoValues,
+    RegressionCalibration,
+    ScoreCorrection,
+    SupervisedStacking,
+    TransportResult,
+    blind_transport,
+    get_correction,
+    list_corrections,
+    pseudo_values,
+    register,
+    rubin_pool,
+)
+from copernicus.corrections.planning import SizePlan, plan_sample_size, plan_table
+from copernicus.corrections.sampling import (
+    SampleDraw,
+    attach_draw,
+    draw_from_data,
+    draw_groups,
+    draw_human_sample,
+    groups_for_quota,
+    population_hash_of,
+)
+from copernicus.corrections.study import repeated_study
+
+__all__ = [
+    "HOLDOUT_BAND",
+    "HOLDOUT_SHARE",
+    "INNER_FOLDS",
+    "MIN_TRAIN",
+    "RAW_COLUMNS",
+    "REGISTRY",
+    "RESULT_COLUMNS",
+    "SKIPPED_COLUMNS",
+    "SUMMARY_COLUMNS",
+    "BatteryEntry",
+    "BatteryResult",
+    "BatterySettings",
+    "ClassicalScore",
+    "CorrectionData",
+    "CorrectionEnsemble",
+    "EmbeddingAugmented",
+    "EnsembleResult",
+    "Estimate",
+    "FamilySpec",
+    "Fitted",
+    "LatentPooling",
+    "LinePredictor",
+    "MarginalMatching",
+    "MisclassificationMatrix",
+    "MultipleImputation",
+    "PooledEstimate",
+    "PseudoValues",
+    "RegressionCalibration",
+    "SampleDraw",
+    "ScoreCorrection",
+    "SizePlan",
+    "SupervisedStacking",
+    "TransportResult",
+    "attach_draw",
+    "best_score_column",
+    "blind_transport",
+    "cross_fit_predictions",
+    "draw_from_data",
+    "draw_groups",
+    "draw_human_sample",
+    "get_correction",
+    "group_difference_ppi",
+    "groups_for_quota",
+    "grouped_folds",
+    "holdout_split",
+    "inner_k",
+    "inner_splits",
+    "list_corrections",
+    "long_short_split",
+    "mean_ppi",
+    "minmax_apply",
+    "minmax_fit",
+    "moment_subtraction",
+    "ols_outcome_ppi",
+    "ols_predictor_ppi",
+    "oriv",
+    "plan_sample_size",
+    "plan_table",
+    "population_hash_of",
+    "pseudo_values",
+    "read_draw",
+    "register",
+    "repeated_study",
+    "rubin_pool",
+    "run_battery",
+    "scale_test",
+    "simex",
+    "summarize_battery",
+    "write_draw",
+]

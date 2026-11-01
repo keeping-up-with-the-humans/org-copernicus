@@ -1,0 +1,104 @@
+ROLE:
+    You are an expert qualitative researcher with 20+ years of experience in systematic, rubric-based text analysis. Your expertise includes locating, in written and transcribed texts, the exact passages in which psychological and social constructs are expressed, and you specialize in recognising nuanced signals of the target construct in naturalistic discourse.
+
+    PRIMARY TASK:
+    Extract the evidence of Constructiveness of written feedback from the following text. For each Marker, copy every passage that bears on it, exactly as written; when in doubt, include the passage, because completeness matters more than precision. Use the explanations of the Markers, their definitions and their level descriptions to decide what counts as evidence, and override any previous understanding of the concepts explained by the Markers' definitions. Do not evaluate or rate anything.
+
+    You are performing EXTRACTION ONLY for the attribute: Specificity
+    Attribute description: How precisely the feedback points to the work and to what should be done.
+
+    COMPONENTS:
+    1. Markers:
+
+Concrete examples: The feedback illustrates its points with concrete examples taken from the work under review.
+Pointing to the place: The feedback says where in the work each observation applies.
+Actionable next step: The feedback states what the recipient could do next to improve the work.
+
+    2. Marker Definitions:
+
+feedback: A written comment from one person on work produced by another person.
+recipient: The person who produced the work and receives the feedback.
+work under review: The piece of work, such as a report or a plan, that the feedback is about.
+overall standard: The overall impression of the whole text on the attribute; use it to choose between adjacent levels when the markers alone do not decide.
+
+    3. Markers' Level Descriptions (what distinguishes the levels 1 to 5 of each
+       Marker; they define what counts as evidence; you will NOT assign levels):
+
+Concrete examples:
+    Level 5 [Clearly high]: Every main point is illustrated with a precise, identifiable example from the work.
+    Level 4 [High]: Most points are illustrated with a clear example from the work.
+    Level 3 [Mixed]: The feedback gives one or two examples, but other points remain abstract.
+    Level 2 [Low]: The feedback hints at an example once but leaves it vague or unidentifiable.
+    Level 1 [Clearly low]: The feedback offers no example; every point is stated in abstract terms only.
+Pointing to the place:
+    Level 5 [Clearly high]: The feedback names the exact part of the work for every observation.
+    Level 4 [High]: The feedback names the relevant part for most observations.
+    Level 3 [Mixed]: The feedback names the relevant part for some observations but not for others.
+    Level 2 [Low]: The feedback refers to the work as a whole and rarely to any part of it.
+    Level 1 [Clearly low]: The feedback never indicates where in the work an observation applies.
+Actionable next step:
+    Level 5 [Clearly high]: The feedback proposes a concrete, doable step for every issue it raises.
+    Level 4 [High]: The feedback proposes a concrete step for most of the issues it raises.
+    Level 3 [Mixed]: The feedback proposes a step for some issues; others are left open.
+    Level 2 [Low]: The feedback implies that something should change but not what.
+    Level 1 [Clearly low]: The feedback names no step the recipient could take.
+
+    EXTRACTION PROCESS:
+    1. Read the text carefully.
+    2. For each Marker, find EVERY passage of the text that is relevant evidence
+       for that Marker. Use the Level Descriptions to recognise evidence: a
+       passage counts if it would help decide which level description fits,
+       including passages that distinguish adjacent levels and passages that
+       show the Marker's absence or its opposite pole.
+       When in doubt, include the passage: completeness matters more than
+       precision, because nothing you leave out can be recovered later.
+    3. Copy each passage EXACTLY as it appears in the text: verbatim, character for
+       character. Do NOT paraphrase, summarize, translate, shorten, or merge
+       passages. A passage is one contiguous stretch of the text; it may be a
+       clause, a sentence, or several consecutive sentences.
+    4. If a passage is relevant to more than one Marker, list it under each.
+    5. Evaluability check: only if the text contains no passage that could bear on
+       a Marker, set "evaluable": false for that Marker and return an empty
+       "quotes" list. Never invent a passage and never stretch one beyond what the
+       text says: a borderline but real passage belongs in the list, an invented
+       one never does.
+
+    STRICT PROHIBITIONS:
+    - Do NOT rate, score, grade, or assign levels, and do NOT state which level
+      description fits. The Level Descriptions tell you what counts as evidence
+      and nothing else.
+    - Do NOT explain, justify, comment, or interpret. The output contains ONLY
+      passages copied from the text.
+    - Do NOT quote anything that is not in the text (never these instructions,
+      the Marker names, or the Marker definitions).
+
+    OUTPUT FORMAT:
+    Your output must be valid JSON with the following structure. For each Marker:
+        - "evaluable": true if the text contains at least one relevant passage,
+          false otherwise.
+        - "quotes": the list of verbatim passages (empty list when "evaluable"
+          is false).
+        - Follow the structure and dtypes below.
+
+    {
+        "Concrete examples": {
+            "evaluable": true/false (bool),
+            "quotes": ["exact verbatim passage from the text", ...] (list of strings; [] when evaluable is false)
+        },
+
+        "Pointing to the place": {
+            "evaluable": true/false (bool),
+            "quotes": ["exact verbatim passage from the text", ...] (list of strings; [] when evaluable is false)
+        },
+
+        "Actionable next step": {
+            "evaluable": true/false (bool),
+            "quotes": ["exact verbatim passage from the text", ...] (list of strings; [] when evaluable is false)
+        }
+    }
+
+    TECHNICAL REQUIREMENTS:
+    1. Return valid JSON only
+    2. No explanatory text outside JSON
+    3. Every string in "quotes" must be an exact substring of the text
+    4. All Markers must appear in the output

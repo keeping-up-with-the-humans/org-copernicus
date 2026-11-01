@@ -1,0 +1,107 @@
+site_name: copernicus
+site_description: Rubric-based coding of constructs from text, with validity checks and corrections for the bias that remains.
+site_url: https://keeping-up-with-the-humans.github.io/org-copernicus/
+repo_url: https://github.com/keeping-up-with-the-humans/org-copernicus
+docs_dir: docs
+strict: true
+
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            members_order: source
+
+markdown_extensions:
+  - admonition
+  - pymdownx.highlight
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.snippets:
+      base_path: ["."]
+      check_paths: true
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Getting started: getting-started.md
+  - Tutorials:
+      - The rubric: tutorials/rubric.md
+      - The two-stage coder: tutorials/two-stage-coder.md
+      - The similarity coder: tutorials/similarity-coder.md
+      - The hybrid coder: tutorials/hybrid-coder.md
+      - The NLP-ML baseline: tutorials/nlp-ml-baseline.md
+      - The validity panel: tutorials/validity-panel.md
+      - The human sample: tutorials/human-sample.md
+      - Correcting scores: tutorials/correcting-scores.md
+      - Correcting estimates: tutorials/correcting-estimates.md
+      - Sample size: tutorials/sample-size.md
+  - Decision guide: decision-guide.md
+  - Methods:
+      - Overview: methods/index.md
+      - Two-stage LLM coder: methods/two-stage-llm-coder.md
+      - One-stage LLM coder: methods/one-stage-llm-coder.md
+      - Similarity coder: methods/similarity-coder.md
+      - Hybrid coder: methods/hybrid-coder.md
+      - NLP-ML baseline: methods/nlp-ml-baseline.md
+      - Validity panel: methods/validity-panel.md
+      - Corrections:
+          - Overview: methods/corrections/index.md
+          - Regression calibration: methods/corrections/regression-calibration.md
+          - Marginal matching: methods/corrections/marginal-matching.md
+          - Multiple imputation: methods/corrections/multiple-imputation.md
+          - Misclassification matrix: methods/corrections/misclassification-matrix.md
+          - Pseudo-values and PPI: methods/corrections/pseudo-values.md
+          - Latent pooling: methods/corrections/latent-pooling.md
+          - Supervised stacking: methods/corrections/supervised-stacking.md
+          - Classical corrections: methods/corrections/classical-corrections.md
+          - Embedding-augmented calibration: methods/corrections/embedding-augmented-calibration.md
+          - Correction ensemble: methods/corrections/correction-ensemble.md
+          - Instrumented coding: methods/corrections/instrumented-coding.md
+      - References: methods/references.md
+  - API reference:
+      - Overview: api/index.md
+      - rubric: api/rubric.md
+      - data: api/data.md
+      - llm: api/llm.md
+      - coders: api/coders.md
+      - embeddings: api/embeddings.md
+      - references: api/references.md
+      - similarity: api/similarity.md
+      - hybrid: api/hybrid.md
+      - validity: api/validity.md
+      - baseline: api/baseline.md
+      - corrections: api/corrections.md
+      - errors: api/errors.md
+  - FAQ: faq.md
+  - Changelog: changelog.md
+  - Citing: citing.md

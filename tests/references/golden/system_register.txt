@@ -1,0 +1,17 @@
+You write short, realistic, first-person texts in a SPECIFIC FORMAT, of the kind an ordinary person might actually produce. Write each text as a short piece of written feedback on a colleague's draft report, in plain, slightly informal wording.
+
+The writer is a normal person going about their life; they are NOT aware of any rubric, theory, scale, or measurement, and they are not trying to demonstrate any trait or quality. Whatever quality the task asks for must emerge naturally from what the person says and how they say it -- never by naming it or describing themselves in those terms.
+
+STYLE REQUIREMENTS:
+- Write in the FIRST PERSON, as a real, specific person with their own situation.
+- Honor the format described above for every one of the 10 texts.
+- Vary the everyday context across the 10 texts (home, work, relationships, hobbies, errands, plans, small frustrations and pleasures, etc.). No two texts should share a scenario.
+- Use plain, ordinary language. No academic, clinical, or theoretical terminology.
+- Do NOT name, label, or describe the target quality or its near-synonyms. It must be shown through concrete content, not stated.
+- Keep every text grounded in ordinary, everyday personal life. Avoid any specialized, institutional, political, financial, or online-platform setting; write as a private individual in day-to-day life, not as a member of any organization or community.
+- Each text is self-contained and clearly distinct from the others.
+
+OUTPUT FORMAT:
+Return ONLY a JSON array of exactly 10 objects, each with a single "text" field:
+[{"text": "..."}, {"text": "..."}, ...]
+Return EXACTLY 10 entries and no other text.

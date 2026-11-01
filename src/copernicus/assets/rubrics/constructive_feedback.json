@@ -1,0 +1,290 @@
+{
+  "rubric_id": "constructive_feedback_v1",
+  "concept": "Constructiveness of written feedback",
+  "concept_definition": "Constructiveness is the degree to which written feedback helps its recipient understand what to keep and what to change in the work. Feedback is more constructive when it is specific, respectful in tone, and supported by reasons.",
+  "literature_sources": [
+    "Handbook of written feedback in organisations, chapter 4",
+    "Principles of effective critique: a practitioner's guide, chapters 2 and 3"
+  ],
+  "attributes": [
+    {
+      "attribute_id": "specificity",
+      "name": "Specificity",
+      "description": "How precisely the feedback points to the work and to what should be done.",
+      "literature_sources": [
+        "Handbook of written feedback in organisations, chapter 4"
+      ],
+      "markers": [
+        {
+          "marker_id": "spec_examples",
+          "name": "Concrete examples",
+          "description": "The feedback illustrates its points with concrete examples taken from the work under review.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "The feedback offers no example; every point is stated in abstract terms only."
+            },
+            "2": {
+              "label": "Low",
+              "description": "The feedback hints at an example once but leaves it vague or unidentifiable."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "The feedback gives one or two examples, but other points remain abstract."
+            },
+            "4": {
+              "label": "High",
+              "description": "Most points are illustrated with a clear example from the work."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "Every main point is illustrated with a precise, identifiable example from the work."
+            }
+          }
+        },
+        {
+          "marker_id": "spec_location",
+          "name": "Pointing to the place",
+          "description": "The feedback says where in the work each observation applies.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "The feedback never indicates where in the work an observation applies."
+            },
+            "2": {
+              "label": "Low",
+              "description": "The feedback refers to the work as a whole and rarely to any part of it."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "The feedback names the relevant part for some observations but not for others."
+            },
+            "4": {
+              "label": "High",
+              "description": "The feedback names the relevant part for most observations."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "The feedback names the exact part of the work for every observation."
+            }
+          }
+        },
+        {
+          "marker_id": "spec_actionable",
+          "name": "Actionable next step",
+          "description": "The feedback states what the recipient could do next to improve the work.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "The feedback names no step the recipient could take."
+            },
+            "2": {
+              "label": "Low",
+              "description": "The feedback implies that something should change but not what."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "The feedback proposes a step for some issues; others are left open."
+            },
+            "4": {
+              "label": "High",
+              "description": "The feedback proposes a concrete step for most of the issues it raises."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "The feedback proposes a concrete, doable step for every issue it raises."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "attribute_id": "tone",
+      "name": "Tone",
+      "description": "How respectfully and fairly the feedback is worded.",
+      "literature_sources": [
+        "Principles of effective critique: a practitioner's guide, chapter 2"
+      ],
+      "markers": [
+        {
+          "marker_id": "tone_respect",
+          "name": "Respectful wording",
+          "description": "The feedback addresses the recipient and the work with courtesy and without disparagement.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "The wording is openly dismissive, sarcastic, or insulting."
+            },
+            "2": {
+              "label": "Low",
+              "description": "The wording is curt or condescending in places."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "The wording is neutral; it is neither courteous nor discourteous."
+            },
+            "4": {
+              "label": "High",
+              "description": "The wording is courteous throughout, with a few neutral passages."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "The wording is consistently courteous and treats the recipient as a capable peer."
+            }
+          }
+        },
+        {
+          "marker_id": "tone_balance",
+          "name": "Balance of strengths and weaknesses",
+          "description": "The feedback acknowledges what works in the work as well as what needs to improve.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "The feedback lists only weaknesses, or only strengths, with no counterpart."
+            },
+            "2": {
+              "label": "Low",
+              "description": "The feedback mentions the other side once in passing."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "The feedback covers both strengths and weaknesses but gives them unequal weight."
+            },
+            "4": {
+              "label": "High",
+              "description": "The feedback covers both strengths and weaknesses with reasonable weight on each."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "The feedback covers strengths and weaknesses in depth and links them to each other."
+            }
+          }
+        },
+        {
+          "marker_id": "tone_blame",
+          "name": "Absence of blame",
+          "description": "The feedback focuses on the work and what can change rather than on faults of the person.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "The feedback attributes problems to the person's character or ability."
+            },
+            "2": {
+              "label": "Low",
+              "description": "The feedback often implies that the person is at fault."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "The feedback mixes comments on the work with occasional remarks about the person."
+            },
+            "4": {
+              "label": "High",
+              "description": "The feedback concentrates on the work, with one or two remarks about the person."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "The feedback speaks only about the work and about what can be changed."
+            }
+          }
+        }
+      ]
+    },
+    {
+      "attribute_id": "reasoning",
+      "name": "Reasoning",
+      "description": "How well the feedback explains and supports its judgements.",
+      "literature_sources": [
+        "Principles of effective critique: a practitioner's guide, chapter 3"
+      ],
+      "markers": [
+        {
+          "marker_id": "reas_why",
+          "name": "Explanation of the reason",
+          "description": "The feedback explains why a point matters or why something is judged as it is.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "Judgements are stated as bare verdicts with no reason given."
+            },
+            "2": {
+              "label": "Low",
+              "description": "A reason is gestured at but not spelled out."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "Reasons are given for some judgements and omitted for others."
+            },
+            "4": {
+              "label": "High",
+              "description": "Reasons are given for most judgements and are easy to follow."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "Every judgement comes with a clear reason that the recipient can evaluate."
+            }
+          }
+        },
+        {
+          "marker_id": "reas_evidence",
+          "name": "Support from evidence or standards",
+          "description": "The feedback backs its judgements with evidence, a rule, or a shared standard.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "No evidence, rule, or standard is invoked anywhere."
+            },
+            "2": {
+              "label": "Low",
+              "description": "Evidence or standards are mentioned in general terms only."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "Some judgements rest on a stated standard or fact; others rest on opinion alone."
+            },
+            "4": {
+              "label": "High",
+              "description": "Most judgements rest on a stated standard or fact."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "Each main judgement rests on an explicit standard, fact, or comparison."
+            }
+          }
+        },
+        {
+          "marker_id": "reas_alternatives",
+          "name": "Consideration of alternatives",
+          "description": "The feedback weighs other ways of doing the work instead of insisting on a single way.",
+          "sub_rubric": {
+            "1": {
+              "label": "Clearly low",
+              "description": "The feedback insists on a single way and dismisses all others."
+            },
+            "2": {
+              "label": "Low",
+              "description": "The feedback mentions another option only to reject it at once."
+            },
+            "3": {
+              "label": "Mixed",
+              "description": "The feedback names an alternative for at least one point without comparing it."
+            },
+            "4": {
+              "label": "High",
+              "description": "The feedback compares at least one alternative with the current approach."
+            },
+            "5": {
+              "label": "Clearly high",
+              "description": "The feedback compares several alternatives and says when each would fit best."
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "definitions": {
+    "feedback": "A written comment from one person on work produced by another person.",
+    "recipient": "The person who produced the work and receives the feedback.",
+    "work under review": "The piece of work, such as a report or a plan, that the feedback is about.",
+    "overall standard": "The overall impression of the whole text on the attribute; use it to choose between adjacent levels when the markers alone do not decide."
+  }
+}

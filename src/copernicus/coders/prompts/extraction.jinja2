@@ -1,0 +1,67 @@
+ROLE:
+    {{ role_description }}
+
+    PRIMARY TASK:
+    {{ task_framing }}
+
+    You are performing EXTRACTION ONLY for the attribute: {{ attribute_name }}
+    Attribute description: {{ attribute_description }}
+
+    COMPONENTS:
+    1. Markers:
+
+{{ markers_section }}
+
+    2. Marker Definitions:
+
+{{ definitions_section }}
+
+    3. Markers' Level Descriptions (what distinguishes the levels 1 to 5 of each
+       Marker; they define what counts as evidence; you will NOT assign levels):
+
+{{ level_descriptions_section }}
+
+    EXTRACTION PROCESS:
+    1. Read the text carefully.
+    2. For each Marker, find EVERY passage of the text that is relevant evidence
+       for that Marker. Use the Level Descriptions to recognise evidence: a
+       passage counts if it would help decide which level description fits,
+       including passages that distinguish adjacent levels and passages that
+       show the Marker's absence or its opposite pole.
+       When in doubt, include the passage: completeness matters more than
+       precision, because nothing you leave out can be recovered later.
+    3. Copy each passage EXACTLY as it appears in the text: verbatim, character for
+       character. Do NOT paraphrase, summarize, translate, shorten, or merge
+       passages. A passage is one contiguous stretch of the text; it may be a
+       clause, a sentence, or several consecutive sentences.
+    4. If a passage is relevant to more than one Marker, list it under each.
+    5. Evaluability check: only if the text contains no passage that could bear on
+       a Marker, set "evaluable": false for that Marker and return an empty
+       "quotes" list. Never invent a passage and never stretch one beyond what the
+       text says: a borderline but real passage belongs in the list, an invented
+       one never does.
+
+    STRICT PROHIBITIONS:
+    - Do NOT rate, score, grade, or assign levels, and do NOT state which level
+      description fits. The Level Descriptions tell you what counts as evidence
+      and nothing else.
+    - Do NOT explain, justify, comment, or interpret. The output contains ONLY
+      passages copied from the text.
+    - Do NOT quote anything that is not in the text (never these instructions,
+      the Marker names, or the Marker definitions).
+
+    OUTPUT FORMAT:
+    Your output must be valid JSON with the following structure. For each Marker:
+        - "evaluable": true if the text contains at least one relevant passage,
+          false otherwise.
+        - "quotes": the list of verbatim passages (empty list when "evaluable"
+          is false).
+        - Follow the structure and dtypes below.
+
+{{ output_json_template_extract_only }}
+
+    TECHNICAL REQUIREMENTS:
+    1. Return valid JSON only
+    2. No explanatory text outside JSON
+    3. Every string in "quotes" must be an exact substring of the text
+    4. All Markers must appear in the output

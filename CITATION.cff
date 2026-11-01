@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+title: "copernicus: rubric-based construct coding with LLM methods"
+message: "Please cite the accompanying methods paper (under review) and this software."
+type: software
+version: 0.1.0
+license: MIT
+repository-code: "https://github.com/keeping-up-with-the-humans/org-copernicus"
+url: "https://keeping-up-with-the-humans.github.io/org-copernicus/"
+authors:
+  - name: "Author names withheld"
+preferred-citation:
+  type: article
+  title: "The accompanying methods paper"
+  authors:
+    - name: "Author names withheld"
+  notes: "under review"

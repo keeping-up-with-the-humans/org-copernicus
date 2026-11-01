@@ -1,0 +1,61 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A run is superseded only by a newer run of the same event, repository and branch, so a pull
+# request from a fork's branch never cancels the upstream push to a branch of the same name.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  NO_MKDOCS_2_WARNING: "1"
+  HF_HUB_OFFLINE: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+        include:
+          # The documentation tools need Python 3.11 or later, so only the 3.12 leg builds the docs.
+          - python-version: "3.10"
+            extras: dev
+          - python-version: "3.12"
+            extras: dev,docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install the package with the extras of this Python version
+        run: pip install -e ".[${{ matrix.extras }}]"
+      - name: Lint and type-check
+        run: |
+          ruff check src tests examples
+          ruff format --check src tests examples
+          mypy src
+      - name: Run the default tests (no encoder, no slow test)
+        run: pytest -q -m "not embed and not slow"
+      - name: Build the documentation
+        if: matrix.python-version == '3.12'
+        run: mkdocs build --strict
+
+  slow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the package with the dev and docs extras
+        run: pip install -e ".[dev,docs]"
+      - name: Run the slow tests (no encoder)
+        run: pytest -q -m "slow and not embed"

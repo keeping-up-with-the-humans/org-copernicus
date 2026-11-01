@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://copernicus.invalid/schemas/rubric.json",
+  "title": "Copernicus rubric",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "rubric_id",
+    "concept",
+    "concept_definition",
+    "literature_sources",
+    "attributes",
+    "definitions"
+  ],
+  "properties": {
+    "rubric_id": {"type": "string", "minLength": 1},
+    "concept": {"type": "string", "minLength": 1},
+    "concept_definition": {"type": "string", "minLength": 1},
+    "literature_sources": {"$ref": "#/$defs/literature_sources"},
+    "attributes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/attribute"}
+    },
+    "definitions": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    }
+  },
+  "$defs": {
+    "literature_sources": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "attribute": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["attribute_id", "name", "description", "markers"],
+      "properties": {
+        "attribute_id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1},
+        "literature_sources": {"$ref": "#/$defs/literature_sources"},
+        "markers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/marker"}
+        }
+      }
+    },
+    "marker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["marker_id", "name", "description", "sub_rubric"],
+      "properties": {
+        "marker_id": {"type": "string", "minLength": 1},
+        "name": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1},
+        "sub_rubric": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["1", "2", "3", "4", "5"],
+          "properties": {
+            "1": {"$ref": "#/$defs/level"},
+            "2": {"$ref": "#/$defs/level"},
+            "3": {"$ref": "#/$defs/level"},
+            "4": {"$ref": "#/$defs/level"},
+            "5": {"$ref": "#/$defs/level"}
+          }
+        }
+      }
+    },
+    "level": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "description"],
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "description": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "spec_examples": ["for example", "such as", "paragraph"],
+  "spec_location": ["section", "page", "line"],
+  "spec_actionable": ["suggest", "could", "try"],
+  "tone_respect": ["thank", "appreciate", "nice work"],
+  "tone_balance": ["strength", "well done", "however"],
+  "tone_blame": ["sloppy", "lazy", "careless"],
+  "reas_why": ["because", "since", "reason"],
+  "reas_evidence": ["data", "figure", "evidence"],
+  "reas_alternatives": ["alternatively", "instead", "another option"]
+}

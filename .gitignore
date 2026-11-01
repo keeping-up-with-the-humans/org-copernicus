@@ -1,0 +1,15 @@
+__pycache__/
+.pytest_cache/
+*.egg-info/
+dist/
+site/
+.mypy_cache/
+.ruff_cache/
+.venv/
+.coverage
+*.sqlite
+*.npz
+*.parquet
+
+# Keep the hygiene test tracked although its name looks like a token file.
+!tests/test_no_banned_tokens.py

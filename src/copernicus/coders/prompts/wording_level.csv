@@ -1,0 +1,32 @@
+variant_id,enabled,scoring,one_stage
+level_topdown,true,"a) Begin at highest level (5):
+            - Check ALL criteria from Scoring Rubric for that level
+            - Document specific evidence meeting/missing criteria
+            - Move to next level if gaps exist","b) Begin at highest level (5):
+            - Check ALL criteria from Scoring Rubric for that level
+            - Document specific evidence meeting/missing criteria
+            - Move to next level if gaps exist"
+level_midpoint,true,"a) Begin at middle level (3):
+            - Assess whether evidence exceeds, meets, or falls short of level 3 criteria
+            - If evidence exceeds, move up; if it falls short, move down
+            - Document specific evidence at each boundary","b) Begin at middle level (3):
+            - Assess whether evidence exceeds, meets, or falls short of level 3 criteria
+            - If evidence exceeds level 3, move up to level 4, then 5
+            - If evidence falls short, move down to level 2, then 1
+            - Document specific evidence at each boundary"
+level_independent,true,"a) Independently assess which level (1-5) best characterizes the overall evidence:
+            - Read all level descriptions in the Scoring Rubric
+            - Identify the level whose description most closely matches the synthesized evidence
+            - Document why adjacent levels are less appropriate","b) For each marker, independently assess which level (1-5) best characterizes the evidence:
+            - Read all level descriptions in the Scoring Rubric
+            - Identify the level whose description most closely matches the evidence
+            - Document why adjacent levels are less appropriate"
+level_bottomup,true,"a) Begin at lowest level (1):
+            - Check whether the synthesized evidence exceeds level 1 criteria
+            - If yes, move up to level 2 and check again
+            - Continue ascending until evidence no longer supports further ascent
+            - Document the boundary where advancement stops","b) Begin at lowest level (1):
+            - Check whether the evidence exceeds level 1 criteria
+            - If yes, move up to level 2 and check again
+            - Continue ascending until evidence no longer clearly exceeds the current level
+            - Document the boundary where evidence stops supporting further ascent"

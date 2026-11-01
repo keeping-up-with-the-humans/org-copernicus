@@ -1,0 +1,20 @@
+TARGET QUALITY: "Constructiveness of written feedback"
+
+WHAT THIS QUALITY MEANS (background for you, the writer; never quote it):
+Constructiveness is the degree to which written feedback helps its recipient understand what to keep and what to change in the work. Feedback is more constructive when it is specific, respectful in tone, and supported by reasons.
+
+You are writing texts that STRONGLY and unambiguously exemplify the HIGH end of this quality. The HIGH end looks like this in concrete terms:
+[Specificity]
+- Concrete examples: Every main point is illustrated with a precise, identifiable example from the work.
+- Pointing to the place: The feedback names the exact part of the work for every observation.
+- Actionable next step: The feedback proposes a concrete, doable step for every issue it raises.
+[Tone]
+- Respectful wording: The wording is consistently courteous and treats the recipient as a capable peer.
+- Balance of strengths and weaknesses: The feedback covers strengths and weaknesses in depth and links them to each other.
+- Absence of blame: The feedback speaks only about the work and about what can be changed.
+[Reasoning]
+- Explanation of the reason: Every judgement comes with a clear reason that the recipient can evaluate.
+- Support from evidence or standards: Each main judgement rests on an explicit standard, fact, or comparison.
+- Consideration of alternatives: The feedback compares several alternatives and says when each would fit best.
+
+Now write 10 short, first-person, everyday texts (about 1-5 sentences each) by different ordinary people, each of which STRONGLY and unambiguously shows the end of the quality described above through natural, concrete content. Do not name or describe the quality; let it come through in what each person says. Vary the everyday situations widely across the 10 texts.
