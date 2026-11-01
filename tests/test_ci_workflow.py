@@ -203,3 +203,34 @@ def test_both_markers_are_registered_and_the_slow_one_is_not_described_as_defaul
     assert set(markers) == {"slow", EMBED_MARKER}
     assert "the default suite runs it" not in markers["slow"]
     assert "slow job" in markers["slow"]
+
+
+def test_the_help_tests_pass_where_the_runner_forces_the_terminal_rendering_of_typer() -> None:
+    """Run a help test with ``GITHUB_ACTIONS`` set, as on the hosting service's runner.
+
+    The test session itself has set the switch that turns the forcing off, so the
+    child process starts without it and relies on ``conftest.py`` to set it.
+    """
+    environment = {
+        key: value for key, value in os.environ.items() if key != "_TYPER_FORCE_DISABLE_TERMINAL"
+    }
+    environment.update({"GITHUB_ACTIONS": "true", "HF_HUB_OFFLINE": "1"})
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-p",
+            "no:asyncio",
+            "tests/cli/test_cli_validity.py::test_the_command_help_keeps_each_paragraph_on_one_line",
+        ],
+        capture_output=True,
+        text=True,
+        env=environment,
+        cwd=LIBRARY_ROOT,
+        timeout=300,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

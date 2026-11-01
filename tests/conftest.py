@@ -7,6 +7,12 @@ import os
 if not os.environ.get("COPERNICUS_TEST_DOWNLOAD"):
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
+# Typer forces terminal rendering of every help text (escape codes, narrow wrapping) when
+# GITHUB_ACTIONS, FORCE_COLOR or PY_COLORS is set, as on a hosting service's runner. It reads
+# both switches when it is first imported, and the help tests compare plain text, so the
+# forcing is switched off here before any import reaches it.
+os.environ.setdefault("_TYPER_FORCE_DISABLE_TERMINAL", "1")
+
 import sys  # noqa: E402
 from collections.abc import Callable, Iterator  # noqa: E402
 
