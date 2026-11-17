@@ -54,8 +54,12 @@ class RunIdentity:
         rubric_hash: ``Rubric.content_hash()`` of the rubric in use.
         settings: Every config field as a string, plus ``template_hashes``,
             ``wording_hash``, ``verifier_version``, and ``library_version`` (see
-            `identity_settings`); the runner adds ``shuffle_markers`` and every
-            entry of the backend's provenance under ``backend_<key>``.
+            `identity_settings`); `copernicus.coders.runner.code_texts` adds
+            ``shuffle_markers``, every entry of the backend's provenance under
+            ``backend_<key>`` and, for the one-stage coder, ``level_orders`` when the
+            levels of some marker are not listed from 5 down to 1 (built by
+            `copernicus.coders.level_orders.level_order_settings`, which a caller who
+            builds an identity by hand calls itself).
     """
 
     method: Literal["two_stage", "one_stage"]
@@ -74,7 +78,7 @@ class ResultRow:
         text_id: Identifier of the text, as a string.
         text_key: Integer key of the text used for seeding.
         text_hash: Text hash of the text the row was coded on
-            (`copernicus.coders.text_hash.hash_text` of the text the coder received).
+            (`copernicus.coders.text_hash.hash_text` of the text the coder sent).
         run_number: Number of the run.
         assignment: The wording and shuffle seed drawn for this text and run.
         attributes: Result per attribute id; must cover every rubric attribute.
@@ -127,8 +131,13 @@ def wording_hash(pool: WordingPool) -> str:
 def identity_settings(config: TwoStageConfig | OneStageConfig, pool: WordingPool) -> dict[str, str]:
     """Build the coder part of the ``settings`` of a `RunIdentity`.
 
-    The runner adds the run-level entries: ``shuffle_markers`` and the backend's
-    provenance, each key prefixed ``backend_``.
+    `copernicus.coders.runner.code_texts` adds the entries that depend on the run and on the
+    rubric: ``shuffle_markers``, the backend's provenance, each key prefixed ``backend_``,
+    and, for the one-stage coder, the level orders of the rubric's markers. A caller who builds
+    the identity of a one-stage run by hand adds the level orders with
+    `copernicus.coders.level_orders.level_order_settings` (``level_order_settings(rubric)``):
+    the store takes the identity as given and compares the rubric's content hash, which does
+    not see the level orders, not the orders themselves.
 
     Args:
         config: The config of the coder.

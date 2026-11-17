@@ -35,6 +35,13 @@ def test_plan_prints_the_effective_size_factor(runner: CliRunner) -> None:
     assert summary_value(result.stdout, "uncorrected") == "2.04"
 
 
+def test_plan_help_names_the_pearson_correlation_and_the_upper_limit(runner: CliRunner) -> None:
+    result = runner.invoke(app, ["corrections", "plan", "--help"])
+    assert result.exit_code == 0, result.stderr
+    words = " ".join(result.stdout.split())
+    assert "Pearson" in words and "upper limit of this multiplier" in words
+
+
 def test_plan_over_lists_writes_the_table(runner: CliRunner, tmp_path: Path) -> None:
     out = tmp_path / "plan.csv"
     args = ["corrections", "plan", "--rho", "0.5", "--n-human", "50,100", "--n-machine", "500,1000"]

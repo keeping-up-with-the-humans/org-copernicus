@@ -7,7 +7,7 @@ Often you do not need a corrected score for every text. You need a number: the m
 - The base install. No GPU, no API key.
 - Machine scores for all texts, and a human sample drawn by whole groups with its inclusion probability: see [The human sample](human-sample.md). The toy corpus stands in for the human coder.
 
-To code with a real model instead of the fake backend, replace the backend line of the code below. This is a snippet to read, not to run:
+To code with a real model instead of the fake backend, replace the backend line of the code below. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. This is a snippet to read, not to run:
 
 ```python
 backend = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY
@@ -83,7 +83,7 @@ True 7
 
 The true mean over all 54 texts is 3.0. The mean of the raw machine scores is 1.7, far below it. The corrected estimate is 3.0, and its interval contains the truth. An `Estimate` holds `point`, `se`, `ci_low`, `ci_high`, the number of labelled and all texts, the method, and a `details` mapping that each estimator documents.
 
-**The standard error is clustered by group.** The texts of a drawn group enter together, so their errors are correlated. With `cluster=None` (the default) the estimator sums the estimating functions within each group whenever a group holds more than one labelled text. Switching it off gives a smaller, wrong standard error:
+**The standard error is clustered by group.** The texts of a drawn group enter together, and their errors can be correlated. With `cluster=None` (the default) the estimator sums the estimating functions within each group whenever a group holds more than one labelled text. Switching it off gives the independent standard error, which leaves out the covariance within groups and can be too small or too large; here it is smaller:
 
 <!-- run -->
 ```python
@@ -111,7 +111,7 @@ True 2.1
 
 ### Step 3: estimate a difference
 
-The difference compares two groups of texts. `long_short_split` marks the texts whose length (the covariate `log_chars`) lies above the median.
+The difference compares two groups of texts. `long_short_split` marks the texts whose length (the covariate `log_chars`) lies at or above the median.
 
 <!-- run -->
 ```python
@@ -123,7 +123,7 @@ print(round(difference.point, 1), round(true_difference, 1))
 
 <!-- output -->
 ```text
-1.6 1.7
+1.8 1.7
 ```
 
 ### Step 4: estimate a regression
@@ -202,7 +202,7 @@ copernicus corrections estimate --kind mean --scores text_scores.csv --texts toy
     --draw drawn.csv.json --group-column group_id --out estimate.json
 ```
 
-The command prints the estimate and writes it, with its details, to a JSON file. The gold file holds `text_id` and the human value of each coded text. `--draw` names the draw file that `corrections sample` (or `write_draw`) wrote: it binds the coded sample to the texts file and gives `pi`, as [The human sample](human-sample.md#on-the-command-line) explains. Without a draw file, the prediction-powered kinds read the inclusion probability of each coded text from the column of the gold file that `--pi-column` names, and check only that the coded texts cover whole groups; moment subtraction, SIMEX and ORIV use no `pi` and check nothing of the draw. `--kind difference` takes `--long-short` or `--group-column-split`; `--kind ols-outcome` takes `--formula`; the predictor kinds take `--outcome` and optionally `--covariates`.
+The command prints the estimate and writes it, with its details, to a JSON file. The gold file holds `text_id` and the human value of each coded text. `--draw` names the draw file that `corrections sample` (or `write_draw`) wrote: it binds the coded sample to the texts file and gives `pi`, as [The human sample](human-sample.md#on-the-command-line) explains. Without a draw file, the prediction-powered kinds read the inclusion probability of each coded text from the column of the gold file that `--pi-column` names, and check only that the coded texts cover whole groups; moment subtraction, SIMEX and ORIV use no `pi` and check nothing of the draw. `--kind difference` takes `--long-short` or `--group-column-split`; `--kind ols-outcome` takes `--formula`; the predictor kinds take `--outcome`; `--kind ols-predictor` also takes `--covariates`, optionally; and `--kind oriv` also takes `--score-a` and `--score-b`, two of the `--score-columns`, one for each of its two measurements.
 
 ## What the output means
 
@@ -214,12 +214,13 @@ The command prints the estimate and writes it, with its details, to a JSON file.
 ## Pitfalls
 
 - **The prediction-powered estimators need `pi`.** They refuse a labelled sample without an inclusion probability, or with unequal probabilities among the labelled texts.
-- **The classical estimators (`moment_subtraction`, `simex`) resample texts, not groups.** Their bootstrap standard errors ignore the clustering, so they are likely too small when groups are large.
+- **The classical estimators (`moment_subtraction`, `simex`) resample texts, not groups.** Their bootstrap standard errors leave out the covariance within groups, so they are likely too small when the texts of a group resemble each other, as the texts of one person usually do.
 - **Few labelled groups.** Clustering needs at least two labelled groups, and some estimators need more labelled texts than that. The error message names the shortfall.
 - **A clustered difference needs two labelled groups on each side.** Whenever the standard error is clustered, by `cluster=True` or by the automatic choice, `group_difference_ppi` refuses a difference whose labelled texts on one side all lie in one group, because that side would add none of its variation between groups to the standard error. Draw more groups, or pass `cluster=False` (`--no-cluster` on the command line), whose independent standard error ignores the correlation of the texts within a group.
 - **The clustered standard error carries a small-sample factor.** The clustered variance of each term is the sum of its squared group sums, divided by the squared number of its texts and multiplied by G/(G − 1), with G the number of groups among those texts. The factor is 2 with two groups and 1.25 with five.
-- **The intervals grow conservative as the labelled share grows.** The standard error counts a variance for the prediction's mean over all texts, although, for a prediction fixed before the draw, that mean does not vary over draws from a fixed corpus (a learned `prediction=` does vary), and it applies no finite-population correction. Against the corpus's own full-gold value the intervals are therefore conservative, and more so as the labelled share grows. With a small labelled share this changes little. With about half of the texts labelled, a nominal 95 percent interval covers the truth in about 98 to 99.5 percent of draws.
-- **A weak or reversed score.** If the machine score does not track the gold, the prediction-powered point keeps the unbiasedness described above, but its interval is no narrower than that of the human values alone, and without power tuning it is wider. With `power_tuning=True`, `lambda_star` comes out near 0 for a useless score and negative for a score that falls as the gold rises.
+- **The intervals can grow conservative as the labelled share grows.** The standard error counts a variance for the prediction's mean over all texts, although, for a prediction fixed before the draw, that mean does not vary over draws from a fixed corpus (a learned `prediction=` does vary), and it applies no finite-population correction. Against the corpus's own full-gold value this can make the intervals conservative, and more so as the labelled share grows. With a small labelled share this changes little. With about half of the texts labelled, a nominal 95 percent interval covered the truth in about 98 to 99.5 percent of draws in the simulations that the [pseudo-values page](../methods/corrections/pseudo-values.md#exactness-and-limitations) reports. It does not guarantee coverage, as the next point shows.
+- **A dominant group can make the interval miss.** When the groups differ in size, a whole-group draw can miss a group that holds a large share of the texts in many draws. The point of `mean_ppi` and `group_difference_ppi` then carries the ratio bias that the [pseudo-values page](../methods/corrections/pseudo-values.md#exactness-and-limitations) describes, and the interval can cover the truth far less often than 95 percent although every draw is defined, at a large labelled share too. A row of `repeated_study` with the status `ok` says only that the share of undefined draws is within the limit, not that the interval covers: read its `coverage`.
+- **A weak or reversed score.** If the machine score does not track the gold, the prediction-powered point keeps the unbiasedness described above, but its interval is no narrower than that of the human values alone, and without power tuning it is wider. With `power_tuning=True`, `lambda_star` comes out near 0 for a useless score and negative for a score that falls as the gold rises; a score that is constant on the labelled texts has no `lambda_star`, and power tuning refuses it with an error that says so.
 - **Do not reuse the sample for model choice and for the estimate.** If you choose among corrections on the same labelled texts, the interval is too optimistic. Use the battery on a separate corpus for the choice.
 
 ## Next

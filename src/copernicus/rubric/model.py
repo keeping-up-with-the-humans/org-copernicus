@@ -15,12 +15,22 @@ from copernicus.rubric.identifiers import located_identifier_problems, marker_na
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["HASH_LENGTH", "Attribute", "Level", "Marker", "Rubric", "is_content_hash"]
+__all__ = [
+    "DEFAULT_LEVEL_ORDER",
+    "HASH_LENGTH",
+    "Attribute",
+    "Level",
+    "Marker",
+    "Rubric",
+    "is_content_hash",
+]
 
 LEVEL_MIN = 1
 LEVEL_MAX = 5
 HASH_LENGTH = 16
 CONTENT_HASH_PATTERN = re.compile(rf"[0-9a-f]{{{HASH_LENGTH}}}")
+DEFAULT_LEVEL_ORDER: tuple[int, ...] = (5, 4, 3, 2, 1)
+"""The default level order, of a marker built in code without ``level_order``: 5 down to 1."""
 
 
 def is_content_hash(value: object) -> bool:
@@ -55,17 +65,42 @@ class Level:
 class Marker:
     """An observable feature of a text that evidences an attribute.
 
+    A marker checks its level order when it is constructed, so the level order of a marker
+    built in code, or changed with ``dataclasses.replace``, names each of the levels 1 to 5
+    once, as that of a loaded marker does.
+
     Attributes:
         marker_id: Identifier, unique within the rubric.
         name: Human-readable name, unique within its attribute.
         description: What the marker captures.
         levels: The five levels, ordered 1 to 5.
+        level_order: The level numbers in the order in which the rubric file lists the
+            marker's levels, each of 1 to 5 once. The one-stage prompt lists the level
+            descriptions in this order; a marker built in code without it lists them from 5
+            down to 1 (`DEFAULT_LEVEL_ORDER`). `Rubric.content_hash` does not see the order.
     """
 
     marker_id: str
     name: str
     description: str
     levels: tuple[Level, ...]
+    level_order: tuple[int, ...] = DEFAULT_LEVEL_ORDER
+
+    def __post_init__(self) -> None:
+        """Check the level order.
+
+        Raises:
+            RubricValidationError: If ``level_order`` is not a tuple of whole numbers that
+                lists each of the levels 1 to 5 once.
+        """
+        order = self.level_order
+        whole = isinstance(order, tuple) and all(type(number) is int for number in order)
+        if not (whole and sorted(order) == list(range(LEVEL_MIN, LEVEL_MAX + 1))):
+            raise RubricValidationError(
+                f"marker {self.marker_id!r}: level_order must be a tuple of whole numbers that "
+                f"lists each of the levels {LEVEL_MIN} to {LEVEL_MAX} once, such as "
+                f"{DEFAULT_LEVEL_ORDER}; got {order!r}"
+            )
 
     def level(self, n: int) -> Level:
         """Return the level with number ``n``.
@@ -216,7 +251,9 @@ class Rubric:
 
         Every attribute is written with its ``literature_sources``, an empty list when it has
         none of its own: a rubric file that leaves an attribute's list out and one that writes
-        it empty are the same rubric, with this one layout and one content hash.
+        it empty are the same rubric, with this one layout and one content hash. Each marker's
+        sub-rubric lists the levels in the marker's `Marker.level_order`, so the rubric read
+        back from the dictionary lists them in the same order.
 
         Returns:
             A plain dictionary that validates against the rubric schema.
@@ -235,7 +272,10 @@ class Rubric:
 
         The canonical JSON is `to_dict` with sorted keys, except that the glossary
         enters as the ordered list of ``[term, meaning]`` pairs: the prompts list the
-        glossary in rubric order, so a reordered glossary is a different rubric.
+        glossary in rubric order, so a reordered glossary is a different rubric. The order in
+        which a marker lists its levels (`Marker.level_order`) does not enter, as the keys are
+        sorted, so the hash of a rubric stays what it was before that order was kept; the
+        one-stage coder, whose prompt follows it, records it in its run store instead.
 
         Returns:
             The first 16 hex characters of the SHA-256 of the canonical JSON.
@@ -260,13 +300,24 @@ def _attribute_to_dict(attribute: Attribute) -> dict[str, Any]:
 
 
 def _marker_to_dict(marker: Marker) -> dict[str, Any]:
-    """Return one marker in the JSON layout of the schema."""
+    """Return one marker in the JSON layout of the schema, its levels in its level order.
+
+    The sub-rubric maps the text of each level's number to the level, built from
+    `Marker.levels` in their order, so a later level of the same key replaces an earlier one, as
+    it did before the level order was kept; only then are its keys put in the level order. A
+    marker built in code may hold a level whose key the level order does not name; such a key
+    follows the others, in the order of the mapping. The content of the sub-rubric, and so the
+    content hash of every rubric, is therefore what it was before.
+    """
+    held = {
+        str(level.level): {"label": level.label, "description": level.description}
+        for level in marker.levels
+    }
+    named = [str(number) for number in marker.level_order if str(number) in held]
+    unnamed = [key for key in held if key not in named]
     return {
         "marker_id": marker.marker_id,
         "name": marker.name,
         "description": marker.description,
-        "sub_rubric": {
-            str(level.level): {"label": level.label, "description": level.description}
-            for level in marker.levels
-        },
+        "sub_rubric": {key: held[key] for key in (*named, *unnamed)},
     }

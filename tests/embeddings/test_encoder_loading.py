@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-import importlib
 import re
 from dataclasses import replace
-from types import SimpleNamespace
-from typing import Any
 
 import pytest
+from fake_libraries import (
+    GTE,
+    GTE_REMEDY,
+    GTE_REVISION,
+    TRANSFORMERS_4,
+    TRANSFORMERS_5,
+    FakeLibraries,
+    install,
+)
 
 from copernicus.embeddings import ENCODERS, Encoder, EncoderSpec
 from copernicus.errors import ConfigurationError
@@ -17,94 +23,16 @@ pytest.importorskip("torch")
 pytestmark = pytest.mark.embed
 
 EMBED_HINT = (
-    'install the embed extra: pip install "org-copernicus[embed]", '
-    'or pip install ".[embed]" from the package\'s root folder'
+    'install the embed extra: pip install ".[embed]" from the package\'s root folder, '
+    'or pip install "org-copernicus[embed]" once a release has been uploaded to the package index'
 )
-GTE = "gte_qwen2_7b"
-GTE_REVISION = "a8d08b36ada9cacfe34c4d6f80957772a025daf2"
-
-
-class FakeDtype:
-    """Stands in for ``torch.dtype``."""
-
-
-class FakeDevice:
-    """Stands in for ``torch.device``; remembers its name."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-
-class FakeModel:
-    """Records the calls a loaded model receives; its config names the loaded commit."""
-
-    def __init__(self, commit: object = "f00dfeed") -> None:
-        self.moved_to: list[FakeDevice] = []
-        self.evaluating = False
-        self.config = SimpleNamespace(_commit_hash=commit)
-
-    def to(self, device: FakeDevice) -> FakeModel:
-        self.moved_to.append(device)
-        return self
-
-    def eval(self) -> FakeModel:
-        self.evaluating = True
-        return self
-
-
-class FakeLibraries:
-    """Fake ``torch`` and ``transformers`` that record how the encoder uses them."""
-
-    def __init__(
-        self, *, cuda: bool = False, mps: bool = False, commit: object = "f00dfeed"
-    ) -> None:
-        self.bfloat16 = FakeDtype()
-        self.torch = SimpleNamespace(
-            __version__="2.99.0",
-            dtype=FakeDtype,
-            bfloat16=self.bfloat16,
-            device=FakeDevice,
-            cuda=SimpleNamespace(is_available=lambda: cuda),
-            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: mps)),
-        )
-        self.tokenizer = SimpleNamespace(padding_side="unset")
-        self.model = FakeModel(commit)
-        self.tokenizer_calls: list[tuple[str, dict[str, Any]]] = []
-        self.model_calls: list[tuple[str, dict[str, Any]]] = []
-        self.transformers = SimpleNamespace(
-            __version__="9.99.0",
-            AutoTokenizer=SimpleNamespace(from_pretrained=self._tokenizer),
-            AutoModel=SimpleNamespace(from_pretrained=self._model),
-        )
-
-    def _tokenizer(self, name: str, **options: Any) -> Any:
-        self.tokenizer_calls.append((name, options))
-        return self.tokenizer
-
-    def _model(self, name: str, **options: Any) -> FakeModel:
-        self.model_calls.append((name, options))
-        return self.model
-
-
-def install(
-    monkeypatch: pytest.MonkeyPatch, libraries: FakeLibraries, *, missing: tuple[str, ...] = ()
-) -> None:
-    """Make the encoder's lazy imports of torch and transformers return the fakes."""
-    real = importlib.import_module
-    fakes = {"torch": libraries.torch, "transformers": libraries.transformers}
-
-    def fake_import(name: str, *args: Any) -> Any:
-        if name in missing:
-            raise ImportError(f"No module named {name!r}", name=name)
-        return fakes[name] if name in fakes else real(name, *args)
-
-    monkeypatch.setattr("copernicus.embeddings.encoder.importlib.import_module", fake_import)
+OTHER_REGISTERED = ("minilm", "mpnet", "bge_m3")
 
 
 def test_a_large_encoder_loads_with_its_dtype_remote_code_and_padding_side(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    libraries = FakeLibraries(cuda=True)
+    libraries = FakeLibraries(cuda=True, transformers_version=TRANSFORMERS_4)
     install(monkeypatch, libraries)
     spec = ENCODERS[GTE]
     left = EncoderSpec(
@@ -142,7 +70,7 @@ def test_a_large_encoder_loads_with_its_dtype_remote_code_and_padding_side(
 def test_the_registry_default_padding_side_is_applied_to_the_tokenizer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    libraries = FakeLibraries()
+    libraries = FakeLibraries(transformers_version=TRANSFORMERS_4)
     install(monkeypatch, libraries)
     Encoder(GTE)._load()
     assert libraries.tokenizer.padding_side == ENCODERS[GTE].padding_side == "right"
@@ -238,3 +166,134 @@ def test_an_error_inside_the_library_is_not_reported_as_a_missing_extra(
     install(monkeypatch, FakeLibraries(), missing=("copernicus.embeddings.pooling",))
     with pytest.raises(ImportError, match="copernicus.embeddings.pooling"):
         Encoder("minilm")._load()
+
+
+def test_gte_under_transformers_5_is_refused_before_any_load_naming_the_reason_and_remedy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    libraries = FakeLibraries(transformers_version=TRANSFORMERS_5)
+    install(monkeypatch, libraries)
+    with pytest.raises(ConfigurationError) as refused:
+        Encoder(GTE)._load()
+    message = str(refused.value)
+    for part in (repr(GTE), TRANSFORMERS_5, "rope_theta", "rope_parameters", GTE_REMEDY):
+        assert part in message, part
+    assert libraries.tokenizer_calls == [] and libraries.model_calls == []
+
+
+def test_gte_under_transformers_4_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    libraries = FakeLibraries(transformers_version=TRANSFORMERS_4)
+    install(monkeypatch, libraries)
+    Encoder(GTE)._load()
+    assert [name for name, _ in libraries.tokenizer_calls] == [ENCODERS[GTE].hf_id]
+    assert [name for name, _ in libraries.model_calls] == [ENCODERS[GTE].hf_id]
+
+
+@pytest.mark.parametrize("version", [TRANSFORMERS_4, TRANSFORMERS_5])
+@pytest.mark.parametrize("name", OTHER_REGISTERED)
+def test_the_other_registered_encoders_load_under_both_lines(
+    monkeypatch: pytest.MonkeyPatch, name: str, version: str
+) -> None:
+    libraries = FakeLibraries(transformers_version=version)
+    install(monkeypatch, libraries)
+    Encoder(name)._load()
+    assert [hf_id for hf_id, _ in libraries.model_calls] == [ENCODERS[name].hf_id]
+
+
+@pytest.mark.parametrize(
+    ("version", "loads"),
+    [
+        ("4.56.0", True),
+        ("4.57.0.dev0", True),
+        ("4.99.99", True),
+        ("v4.57.3", True),
+        (" 4.57.3 ", True),
+        ("4.57.3+review.local", True),
+        ("4.57.3.post1", True),
+        ("0!4.57.6", True),
+        ("5", False),
+        ("5.0.0rc1", False),
+        ("5.0.0.dev0", False),
+        ("5.23.0", False),
+        ("5.12.1+review.local", False),
+        ("10.0.0", False),
+        ("1!5.12.1", False),
+        ("1!4.57.6", False),
+    ],
+)
+def test_gte_reads_the_release_numbers_of_the_installed_version(
+    monkeypatch: pytest.MonkeyPatch, version: str, loads: bool
+) -> None:
+    libraries = FakeLibraries(transformers_version=version)
+    install(monkeypatch, libraries)
+    if loads:
+        Encoder(GTE)._load()
+    else:
+        with pytest.raises(ConfigurationError, match=re.escape(GTE_REMEDY)):
+            Encoder(GTE)._load()
+    assert len(libraries.model_calls) == int(loads)
+
+
+@pytest.mark.parametrize("version", ["4.garbage", "4.57.3oops", "4..5", "4.57.3 rc1", "", "x"])
+def test_an_installed_version_that_the_parser_cannot_read_is_refused_before_any_load(
+    monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    libraries = FakeLibraries(transformers_version=version)
+    install(monkeypatch, libraries)
+    with pytest.raises(ConfigurationError) as refused:
+        Encoder(GTE)._load()
+    message = str(refused.value)
+    assert f"the installed version {version!r} cannot be read as a version" in message
+    assert GTE_REMEDY in message
+    assert libraries.tokenizer_calls == [] and libraries.model_calls == []
+
+
+def test_an_installed_version_that_cannot_be_read_is_refused_only_for_a_bounded_encoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    libraries = FakeLibraries(transformers_version="unknown")
+    install(monkeypatch, libraries)
+    with pytest.raises(ConfigurationError) as refused:
+        Encoder(GTE)._load()
+    assert "'unknown'" in str(refused.value) and GTE_REMEDY in str(refused.value)
+    assert libraries.model_calls == []
+    Encoder("minilm")._load()
+    assert len(libraries.model_calls) == 1
+
+
+def test_the_bound_of_a_specification_of_ones_own_is_checked_with_a_general_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mine = EncoderSpec("mine", "org/mine", "mean", 64, transformers_below="4.60")
+    refused_libraries = FakeLibraries(transformers_version="4.60.0")
+    install(monkeypatch, refused_libraries)
+    with pytest.raises(ConfigurationError) as refused:
+        Encoder(mine)._load()
+    message = str(refused.value)
+    assert "'mine'" in message and "4.60.0" in message and "transformers_below" in message
+    assert 'pip install "transformers>=4.56,<4.60"' in message and "rope_theta" not in message
+    assert refused_libraries.model_calls == []
+    loaded_libraries = FakeLibraries(transformers_version="4.59.2")
+    install(monkeypatch, loaded_libraries)
+    Encoder(mine)._load()
+    assert len(loaded_libraries.model_calls) == 1
+
+
+def test_another_revision_of_gte_keeps_the_bound_but_not_the_reason_of_the_pinned_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    other = replace(ENCODERS[GTE], revision="0" * 40)
+    install(monkeypatch, FakeLibraries(transformers_version=TRANSFORMERS_5))
+    with pytest.raises(ConfigurationError) as refused:
+        Encoder(other)._load()
+    assert GTE_REMEDY in str(refused.value) and "rope_theta" not in str(refused.value)
+
+
+@pytest.mark.parametrize("version", [TRANSFORMERS_4, TRANSFORMERS_5, "99.0.0", "unknown"])
+def test_a_specification_without_a_bound_loads_under_any_version(
+    monkeypatch: pytest.MonkeyPatch, version: str
+) -> None:
+    libraries = FakeLibraries(transformers_version=version)
+    install(monkeypatch, libraries)
+    Encoder(EncoderSpec("mine", "org/mine", "mean", 64))._load()
+    assert [hf_id for hf_id, _ in libraries.model_calls] == ["org/mine"]

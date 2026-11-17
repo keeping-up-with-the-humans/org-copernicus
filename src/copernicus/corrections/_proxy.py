@@ -4,7 +4,13 @@ Reverse calibration: on the labelled rows, the regression of the score on the go
 ``s = c + d g + u`` with ``d = cov(s, g) / var(g)`` and ``c = mean(s) - d mean(g)``, gives the
 proxy ``W = (s - c) / d = g + u / d`` on every text. It measures the construct on the construct's
 own scale, and its error is uncorrelated with the gold value on the labelled rows by
-construction. Moments are sample moments (divisor ``n - 1``) throughout.
+construction. Moments are sample moments (divisor ``n - 1``) throughout. The line is flat, and
+there is no proxy, when its rise over the labelled rows, ``|d|`` times the range of the gold
+values, is at most ``1e-12`` of the range of the score there: the rule for a constant column
+(``is_constant``) applied to ``d (g - mean(g))`` in units of the score's range, which does not
+depend on the units of the score or of the gold values. A covariance that is zero up to
+rounding (a correlation of the order of ``1e-16``) falls below it; a correlation of a few times
+``1e-12`` lies above it.
 
 Stratified bootstrap: each resample draws the labelled rows and the unlabelled rows separately,
 with replacement and each to its own count, so every resample keeps the size of the human sample
@@ -43,6 +49,10 @@ __all__ = [
 
 MIN_FINITE_BOOTS = 50
 MIN_LABELLED = 3
+_NO_LINE = (
+    "the score does not covary with gold on the labelled rows: there is no reverse calibration "
+    "line and no proxy"
+)
 
 
 def sample_covariance(first: np.ndarray, second: np.ndarray) -> float:
@@ -104,7 +114,9 @@ def reverse_calibrate(
 
     Raises:
         EstimatorError: If the gold values are constant on the labelled rows, or the score is
-            constant there or does not covary with the gold values (no line, so no proxy).
+            constant there or does not covary with the gold values: the line's rise over the
+            labelled rows is at most ``1e-12`` of the score's range there (no line, so no
+            proxy).
     """
     score_labelled, gold_labelled = score[labelled], gold[labelled]
     if is_constant(gold_labelled):
@@ -112,13 +124,11 @@ def reverse_calibrate(
             "the reverse calibration needs gold values that vary on the labelled rows; they "
             "are constant"
         )
-    covariance = sample_covariance(score_labelled, gold_labelled)
-    if is_constant(score_labelled) or covariance == 0.0:
-        raise EstimatorError(
-            "the score does not covary with gold on the labelled rows: there is no reverse "
-            "calibration line and no proxy"
-        )
-    slope = covariance / sample_variance(gold_labelled)
+    if is_constant(score_labelled):
+        raise EstimatorError(_NO_LINE)
+    slope = sample_covariance(score_labelled, gold_labelled) / sample_variance(gold_labelled)
+    if is_constant(slope * (gold_labelled - gold_labelled.mean()) / float(np.ptp(score_labelled))):
+        raise EstimatorError(_NO_LINE)
     intercept = float(score_labelled.mean() - slope * gold_labelled.mean())
     return ReverseCalibration(proxy=(score - intercept) / slope, intercept=intercept, slope=slope)
 

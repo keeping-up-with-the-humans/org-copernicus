@@ -129,8 +129,11 @@ def test_unknown_variant_lists_the_variants_of_the_family() -> None:
 
 def test_the_pmm_variant_carries_its_note_in_the_registry() -> None:
     spec = REGISTRY["multiple_imputation"]
-    note = spec.note_for("pmm")
-    assert "predictive mean matching" in note and "removed" in note and "battery" in note
+    assert spec.note_for("pmm") == (
+        "the paper's battery fitted predictive mean matching beside the model draws, within this "
+        "family; the library keys the draws to the row, so the random streams of both variants "
+        "differ from those of the paper's battery"
+    )
     assert spec.note_for("model_draws") == ""
     assert REGISTRY["regression_calibration"].note_for("linear") == ""
     with pytest.raises(SettingsError, match=r"'c'.*not variants"):

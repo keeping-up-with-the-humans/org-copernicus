@@ -149,6 +149,20 @@ def test_openai_options_reach_the_backend(monkeypatch: pytest.MonkeyPatch) -> No
     assert provenance["supports_temperature"] == "False"
 
 
+def test_capabilities_apply_over_the_lookup_of_a_name_with_a_makers_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(API_KEY_VARIABLE, "unused")
+    looked_up = build(BackendKind.OPENAI, "maker/gpt-5-mini").provenance()
+    assert looked_up["supports_temperature"] == "False"
+    assert looked_up["max_tokens_parameter"] == "max_completion_tokens"
+    given = build(
+        BackendKind.OPENAI, "maker/gpt-5-mini", capabilities={"supports_temperature": True}
+    )
+    assert given.provenance()["supports_temperature"] == "True"
+    assert given.provenance()["max_tokens_parameter"] == "max_completion_tokens"
+
+
 @pytest.mark.parametrize("capabilities", [{"colour": 1}, 5])
 def test_capabilities_must_be_an_object_of_capability_fields(
     monkeypatch: pytest.MonkeyPatch, capabilities: object

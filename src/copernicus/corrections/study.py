@@ -3,8 +3,8 @@
 For a corpus whose gold values are known for every text, ``repeated_study`` draws many human
 samples of each size the way ``draw_human_sample`` does (whole groups by simple random sampling,
 ``pi = m / G``), attaches the known values of the drawn texts with ``attach_draw``, and
-estimates the mean and the long-minus-short difference (``long_short_split``) of the construct
-with each estimator:
+estimates the mean of the construct and the long-short difference, the texts at or above the
+covariate's median against the texts below it (``long_short_split``), with each estimator:
 
 * ``raw``: the first score column plugged in for the construct, with its naive standard error
   (no gold value is used, so the estimate is the same in every draw);
@@ -13,12 +13,25 @@ with each estimator:
   calibrated values (the consistent least-squares line; the original analysis divided a sample
   covariance by a population variance);
 * ``ppi_identity``: ``mean_ppi`` and ``group_difference_ppi`` with the first score column and
-  the study's ``cluster`` option: by default the standard error is clustered by group whenever
-  a group of the draw holds more than one labelled text, so a draw of a single group, or one
-  whose labelled texts on a side of the difference lie in a single group, is undefined;
-  ``cluster=False`` treats the texts as independent;
+  the study's ``cluster`` option. A draw with fewer than two labelled texts, or for the
+  difference fewer than two on a side, is undefined under every setting. By default the
+  standard error is clustered by group whenever a group of the draw holds more than one
+  labelled text, so a draw of a single group, or one whose labelled texts on a side of the
+  difference lie in a single group, is undefined as well; ``cluster=False`` treats the texts
+  as independent;
 * ``ppi_crossfit``: the cross-fitted pseudo-values (``pseudo_values`` with the ``crossfit``
-  rectifier) plugged in, with their naive standard error.
+  rectifier) plugged in, with the standard error of that column under the same choice as
+  ``ppi_identity``: by default the contributions of the texts are summed within each group
+  whenever a group of the draw holds more than one labelled text (the formula of
+  ``_clustering``), and ``cluster=False`` gives the naive standard error. Before the column
+  is cross-fitted, a draw is refused as ``ppi_identity`` refuses it, with its messages
+  (``crossfit_clustering``): fewer than two labelled texts, or for the difference fewer than
+  two on a side (a side without labelled texts would keep its uncorrected predictions), under
+  every setting, and, when the draw clusters, fewer than two groups among the texts or the
+  labelled texts. The column covers every text, so a side of the difference whose labelled
+  texts lie in one group still adds the variation of its other groups, and such a draw is not
+  refused; a side whose texts all lie in one group of the corpus would add nothing, so the
+  difference is then refused on every draw that clusters (``require_groups_on_each_side``).
 
 The draw of size ``n`` with index ``d`` takes two integers from the generator
 ``rng_for(seed, "repeated_study", n, d)``: the first is the seed of the group draw
@@ -32,16 +45,25 @@ percent of its draws reports NaN summaries with the status ``undefined_share_exc
 warning naming its last reason; the other rows keep their results (status ``ok``), and the study
 stops only when every row is undefined. The cross-fitted rectifier needs about ``k + 1`` drawn
 groups (six with its five inner folds), so small sizes often leave ``ppi_crossfit`` undefined.
-No finite-population correction is applied, so at large sampling fractions the coverage of the
-design-based estimators is conservative: their standard errors include the variance of the
-machine term, which a fixed corpus does not have.
+No finite-population correction is applied, and the standard errors of the design-based
+estimators include the variance of the machine term, the mean of the predictions over all
+texts. For ``ppi_identity``, whose score is fixed before the draw, that mean does not vary over
+draws from a fixed corpus; ``ppi_crossfit`` learns its prediction on each draw, and that
+prediction varies. This can make the intervals conservative at large sampling fractions, but
+it does not guarantee coverage. When the groups differ in size, a whole-group draw can miss a
+group that holds a large share of the texts in many draws: the mean and the difference of
+``ppi_identity`` are then ratio estimators with a bias (see ``mean_ppi``), and the normal
+intervals of
+``ppi_identity`` and ``ppi_crossfit`` can cover the full-gold value far less often than 95
+percent although every draw is defined, at large sampling fractions too. The status ``ok``
+certifies only that the share of undefined draws is within the limit, not that the intervals
+cover; read ``coverage``.
 """
 
 from __future__ import annotations
 
 import logging
-import numbers
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from functools import cached_property
 
@@ -49,9 +71,19 @@ import numpy as np
 import pandas as pd
 
 from copernicus.baseline.folds import rng_for
-from copernicus.corrections._clustering import checked_cluster
+from copernicus.corrections._clustering import (
+    Clustering,
+    checked_cluster,
+    contributions,
+    mean_covariance,
+)
 from copernicus.corrections._estimate_inputs import complete_column
 from copernicus.corrections._proxy import check_count
+from copernicus.corrections._study_checks import (
+    checked_estimators,
+    checked_sizes,
+    crossfit_clustering,
+)
 from copernicus.corrections.data import CorrectionData
 from copernicus.corrections.estimates import (
     Z,
@@ -65,7 +97,7 @@ from copernicus.corrections.families._fitted import SEED_BOUND
 from copernicus.corrections.families.calibration import fit_ols_line
 from copernicus.corrections.families.pseudo import pseudo_values
 from copernicus.corrections.sampling import attach_draw, draw_from_data
-from copernicus.errors import EstimatorError, SettingsError
+from copernicus.errors import EstimatorError
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +122,7 @@ UNDEFINED_CEILING = 0.10
 STATUS_OK = "ok"
 STATUS_UNDEFINED = "undefined_share_exceeded"
 SUMMARIES = ("estimate_mean", "bias", "coverage", "se_mean")
-MIN_SIZE = 2
-MIN_HALF = 2
+MIN_SIDE = 2
 
 Key = tuple[str, int, str]
 
@@ -126,12 +157,16 @@ class _Draw:
 
 
 def _plugged_column(estimator: str, draw: _Draw) -> np.ndarray:
-    """The column that a plug-in estimator (``raw``, ``calibrated``, ``ppi_crossfit``) uses."""
-    if estimator == "raw":
-        return draw.raw
-    if estimator == "calibrated":
-        return draw.calibrated
-    return draw.ppi_crossfit
+    """The column that a naive plug-in estimator (``raw`` or ``calibrated``) uses."""
+    return draw.raw if estimator == "raw" else draw.calibrated
+
+
+def _crossfit_se(column: np.ndarray, split: np.ndarray | None, clustering: Clustering) -> float:
+    """The standard error of the plugged pseudo-values, clustered as ``ppi_identity`` clusters."""
+    if clustering.groups is None:
+        return naive_se(column, split)
+    psi = contributions(column, split)[:, None]
+    return float(np.sqrt(mean_covariance(psi, clustering.groups)[0, 0]))
 
 
 def _estimate(
@@ -146,37 +181,12 @@ def _estimate(
             else group_difference_ppi(draw.data, split, cluster=cluster)
         )
         return result.point, result.se
+    if estimator == "ppi_crossfit":
+        clustering = crossfit_clustering(draw.data, split, cluster)
+        column = draw.ppi_crossfit
+        return plugin_value(column, split), _crossfit_se(column, split, clustering)
     column = _plugged_column(estimator, draw)
     return plugin_value(column, split), naive_se(column, split)
-
-
-def _checked_sizes(sizes: Sequence[int], n_units: int) -> tuple[int, ...]:
-    """Distinct sizes, each an integer between ``MIN_SIZE`` and the number of texts."""
-    if isinstance(sizes, str | bytes) or not isinstance(sizes, Iterable):
-        raise SettingsError(f"sizes must be a sequence of integers; got {sizes!r}")
-    values = tuple(sizes)
-    if not values:
-        raise SettingsError("sizes must name at least one size")
-    for size in values:
-        if isinstance(size, bool) or not isinstance(size, numbers.Integral):
-            raise SettingsError(f"each size must be an integer; got {size!r}")
-        if not MIN_SIZE <= size <= n_units:
-            raise SettingsError(
-                f"each size must lie between {MIN_SIZE} and the {n_units} texts; got {size}"
-            )
-    if len(set(values)) != len(values):
-        raise SettingsError(f"sizes must be distinct; got {values!r}")
-    return tuple(int(size) for size in values)
-
-
-def _checked_estimators(estimators: Sequence[str]) -> tuple[str, ...]:
-    """Distinct estimator names among ``ESTIMATORS``."""
-    values = () if isinstance(estimators, str) else tuple(estimators)
-    if not values or len(set(values)) != len(values) or not set(values) <= set(ESTIMATORS):
-        raise SettingsError(
-            f"estimators must be distinct names among {', '.join(ESTIMATORS)}; got {estimators!r}"
-        )
-    return values
 
 
 def _draw(
@@ -275,10 +285,15 @@ def repeated_study(
         estimators: Distinct names among ``raw``, ``calibrated``, ``ppi_identity`` and
             ``ppi_crossfit``.
         cluster: The ``cluster`` option of ``mean_ppi`` and ``group_difference_ppi`` in
-            ``ppi_identity``: ``None`` clusters the standard error by group when a group of the
-            draw holds more than one labelled text, ``True`` and ``False`` (numpy booleans too)
-            force the choice. A draw that clustering leaves undefined (one labelled group, or
-            one on a side of the difference) is counted in ``n_undefined``.
+            ``ppi_identity``, and the same choice for the standard error of ``ppi_crossfit``:
+            ``None`` clusters the standard error by group when a group of the draw holds more
+            than one labelled text, ``True`` and ``False`` (numpy booleans too) force the
+            choice. A draw that clustering leaves undefined is counted in ``n_undefined``:
+            fewer than two groups among the texts or the labelled texts, and for the difference
+            a side whose labelled texts lie in one group (``ppi_identity``) or whose texts lie
+            in one group of the corpus (``ppi_crossfit``). Under every setting both count a
+            draw with fewer than two labelled texts, or fewer than two on a side of the
+            difference, as undefined too.
 
     Returns:
         A frame with the columns ``estimator``, ``size``, ``estimand`` (``mean`` or
@@ -292,21 +307,22 @@ def repeated_study(
         SettingsError: If a size, ``draws``, ``seed``, ``estimators`` or ``cluster`` is outside
             its range.
         ConfigurationError: If ``truth_gold`` is not a complete numeric column of the data.
-        EstimatorError: If the covariate does not split the texts into two halves of at least
-            two, or every row is undefined on more than 10 percent of its draws (the message
-            gives the last reason).
+        EstimatorError: If either side of the long-short difference holds fewer than two texts
+            (ties at the median make the sides unequal, and a constant covariate leaves the
+            short side empty), or every row is undefined on more than 10 percent of its draws
+            (the message gives the last reason).
     """
-    size_values = _checked_sizes(sizes, data_full.n)
+    size_values = checked_sizes(sizes, data_full.n)
     draws = check_count("draws", draws, 1)
     seed = check_count("seed", seed, 0)
-    names = _checked_estimators(estimators)
+    names = checked_estimators(estimators, ESTIMATORS)
     requested = checked_cluster(cluster)
     truth_values = complete_column(data_full, truth_gold, "truth_gold")
     split = long_short_split(data_full)
-    if min(int(split.sum()), int((~split).sum())) < MIN_HALF:
+    if min(int(split.sum()), int((~split).sum())) < MIN_SIDE:
         raise EstimatorError(
             "the long-short difference needs at least two texts on each side of the covariate's "
-            f"median; the halves hold {int(split.sum())} and {int((~split).sum())}"
+            f"median; the sides hold {int(split.sum())} and {int((~split).sum())}"
         )
     truths = {
         "mean": plugin_value(truth_values),

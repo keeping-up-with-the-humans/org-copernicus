@@ -51,8 +51,8 @@ class ReferenceEmbeddings:
 
     The references are bound to the content of their rubric: the sidecar holds the
     ``rubric_hash`` of the reference set they were embedded from and its ``bound_with``,
-    and `assert_complete`, which every scoring path calls, refuses a rubric whose content
-    hash differs.
+    and `assert_complete`, which every scoring function that receives the rubric calls,
+    refuses a rubric whose content hash differs.
 
     The five label arrays are turned into one-dimensional string arrays on construction;
     lists and object arrays of strings are accepted.
@@ -202,8 +202,8 @@ class ReferenceEmbeddings:
 
         The references belong to the rubric when it has their rubric id and their content
         hash: a rubric edited under the same ids has another hash, and its references
-        describe the earlier definition. Every scoring path calls this check before it
-        scores.
+        describe the earlier definition. Every scoring function that receives the rubric calls
+        this check before it scores; the pole scorer, which receives only its id, does not.
 
         Args:
             rubric: The rubric the references will be used with.
@@ -350,10 +350,10 @@ class ReferenceEmbeddings:
 
 
 def embed_references(refset: ReferenceSet, encoder: Encoder) -> ReferenceEmbeddings:
-    """Embed the kept reference texts of a reference set.
+    """Embed the kept reference texts of a reference set, each stripped at its ends.
 
-    Each reference is expected to fit into one window of the encoder. A reference that
-    does not is represented by its text vector, the token-weighted mean of its chunks.
+    The set keeps its texts as stored. Each reference should fit one window of the encoder;
+    one that does not is represented by its text vector, the token-weighted mean of its chunks.
 
     Args:
         refset: The reference texts; the ones the leakage screen excluded are skipped.
@@ -371,7 +371,7 @@ def embed_references(refset: ReferenceSet, encoder: Encoder) -> ReferenceEmbeddi
         raise ConfigurationError(
             f"the reference set for rubric {refset.rubric_id} has no reference texts"
         )
-    texts = frame["text"].astype(str).tolist()
+    texts = [text.strip() for text in frame["text"].astype(str).tolist()]
     embedded = encoder.embed(texts, [str(position) for position in range(len(texts))])
     multi_chunk = int(np.sum(np.bincount(embedded.chunk_owner, minlength=len(texts)) > 1))
     if multi_chunk:

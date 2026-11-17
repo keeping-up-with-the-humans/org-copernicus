@@ -188,7 +188,8 @@ def score(
 
     The setting options default to the paper's configuration of the similarity coder. The
     file <out>.json beside the scores records the settings, the encoder of both inputs, the
-    rubric, and the number of rows.
+    comparison of their two loads (load_comparison: the transformers and torch versions of
+    both sides and any warning), the rubric, and the number of rows.
     """
     with cli_logging(verbose), cli_errors():
         check_table_output(out)
@@ -255,10 +256,13 @@ def score_hybrid_command(
 ) -> None:
     """Embed the verified passages of a two-stage run and score them (needs the 'embed' extra).
 
-    The setting options default to the paper's hybrid coder: the vector of each whole
-    evidence text, scored against each pole reduced once over the references of all writers.
+    The setting options default to the hybrid coder's settings: the vector of each whole
+    evidence text, scored against each pole reduced once over the references of all writers,
+    as in the paper's analysis code, with net polarity, the pca reduction and construct level.
     The file <out>.json beside the scores records the settings, the encoder of both inputs,
-    the rubric, the store, the evidence summary, and the number of rows.
+    the comparison of their two loads (load_comparison: the transformers and torch versions
+    of both sides and any warning), the rubric, the store, the evidence summary, and the
+    number of rows.
     """
     with cli_logging(verbose), cli_errors():
         check_table_output(out)

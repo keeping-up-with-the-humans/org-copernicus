@@ -97,8 +97,8 @@ print(sorted(np.unique(donors).tolist()))
 
 ## Where the library departs from the paper's analysis code
 
-- The draws are keyed to the row: a text's imputations do not depend on the batch of texts completed with it. The random streams are therefore not those of the paper's battery; the model is the same.
-- The paper lists predictive mean matching while its analysis battery removed the variant, so the `pmm` results of the library's battery have no counterpart in the paper. The registry carries this note (`REGISTRY["multiple_imputation"].note_for("pmm")`).
+- The draws are keyed to the row: a text's imputations do not depend on the batch of texts completed with it. The random streams of both variants, the model draws and predictive mean matching, are therefore not those of the paper's battery, which fitted both within this family; the model is the same. The registry carries this note for `pmm` (`REGISTRY["multiple_imputation"].note_for("pmm")`).
+- The family predicts the drawn texts, as any text, with the mean of its draws, and in the battery the range of these predictions sets the 0 to 1 scale of the error metrics; the paper's analysis code predicted the drawn texts with the least-squares line of the model, so the scaled error metrics of this family in the battery differ from the paper's.
 
 ## Literature
 

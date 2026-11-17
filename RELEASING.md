@@ -23,16 +23,16 @@ The workflow in `.github/workflows/docs.yml` builds the site with `mkdocs build 
 
 ## 2. Bump the version
 
-The version appears in four places, and the tests tie them together. Change all four to the same number:
+The version appears in four places, and the tests tie them together. With the first change after a release, change all four to the next number, so that code that differs from a published release never carries that release's number. At release, the changelog's heading loses "(not yet released)" and the number stays:
 
 | File | What to change |
 |------|----------------|
 | `src/copernicus/_version.py` | `__version__`; `pyproject.toml` reads its version from this file |
 | `CITATION.cff` | the `version` field |
-| `CHANGELOG.md` | a new `## <version>` heading above the previous one, with the changes of the release |
+| `CHANGELOG.md` | a new `## <version> (not yet released)` heading above the previous one, with the changes since that release |
 | `README.md` and `docs/citing.md` | the `Version <version>` in the citation line |
 
-`tests/test_package.py`, `tests/test_docs_assets.py` and `tests/test_docs_build.py` pin the number `0.1.0` in a few assertions and read the first heading of the changelog; update them in the same commit as the bump. The docs build test reads the third line of `CHANGELOG.md` as the heading of the current release, so the newest release always comes first.
+`tests/test_package.py` and `tests/test_docs_assets.py` pin the number in a few assertions; update them in the commit that raises it. `tests/test_docs_assets.py` checks that the citation file, the README and `docs/citing.md` carry the number of `_version.py`, and the docs build test reads the third line of `CHANGELOG.md` as the heading of that number, with or without "(not yet released)", so the newest version always comes first.
 
 ## 3. Check the documentation build
 
@@ -143,6 +143,6 @@ Check the build of the site in the export as well, with `NO_MKDOCS_2_WARNING=1 m
 Publishing is not part of this checklist; a maintainer does it after the steps above.
 
 1. Tag the commit of the export: `git tag v<version>` and push the tag. A tag made this way carries no identity; an annotated tag would record the tagger.
-2. Upload `dist/*` to the package index under the project's publishing account, never a personal one, with a token that is stored outside the repository (never in a workflow file or in the working tree). The name was checked in section 4, before the export.
+2. Upload `dist/*` to the package index under the project's publishing account, never a personal one, with a token that is stored outside the repository (never in a workflow file or in the working tree). The name was checked in section 4, before the export. A version can also be published without this step, as a commit and a tag of the public repository only; the installation page and the README then say that no release is on the package index.
 3. The documentation site needs no step of its own: the push to `main` deploys the site through the `docs` workflow. The Pages source "GitHub Actions" was set once through the repository's API, and nothing is repeated per release.
-4. Add a heading for the next version to `CHANGELOG.md` only when its first change lands.
+4. With the first change after the release, change the four places of section 2 to the next number, the changelog with a new heading marked "(not yet released)".

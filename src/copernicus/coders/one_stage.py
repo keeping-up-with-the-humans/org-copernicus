@@ -48,7 +48,8 @@ class OneStageConfig:
         max_retries: Number of attempts (not the retries after a first attempt)
             before the coder gives up; at least 1.
         max_new_tokens: Generation budget of the scoring call.
-        min_chars: Texts shorter than this (after stripping) are not coded.
+        min_chars: Texts with fewer characters than this are not coded, counted on the text
+            as it is sent, whitespace between its words included and at its ends not.
     """
 
     max_retries: int = 3
@@ -114,9 +115,10 @@ def evaluate_attribute_one_stage(
 ) -> AttributeResult:
     """Code one attribute of one text with the one-stage LLM coder.
 
-    The text is used as given (the caller normalises whitespace). A text
-    shorter than ``config.min_chars`` after stripping is not sent to the model.
-    Otherwise the scoring call makes up to ``config.max_retries`` attempts with
+    The text is sent as given, its line breaks and runs of whitespace included; the runner
+    passes the text of the table, whose ends are stripped. A text with fewer than
+    ``config.min_chars`` characters, whitespace at its ends not counted, is not sent to the
+    model. Otherwise the scoring call makes up to ``config.max_retries`` attempts with
     seed ``seed + attempt``; the temperature never changes between attempts.
 
     The result has no evidence: ``evidence`` is empty and ``evaluable`` and
@@ -128,7 +130,7 @@ def evaluate_attribute_one_stage(
 
     Args:
         backend: The LLM backend.
-        text: The text to code.
+        text: The text to code, as it is sent to the model.
         ctx: Prompt context: rubric, attribute, marker order, and wording.
         config: Retry, budget, and length settings.
         temperature: Temperature of the scoring call; ``None`` is greedy.

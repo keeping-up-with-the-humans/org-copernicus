@@ -2,8 +2,10 @@
 
 Every entry that applies to the fold's data is fitted on the drawn texts with the generator
 ``rng_for(seed, scheme, size, fold, family)``: keyed by the family, not the variant, so the
-variants of one family share their inner draws (the deletions of embedding-augmented
-calibration, the inner splits of stacking). It predicts the drawn and the held-out texts, and
+variants of one family start from the same state of that generator. The variants of
+embedding-augmented calibration therefore share their deletions; lasso and elastic-net stacking
+each derive their own inner splits, and ridge stacking uses exact leave-one-group-out errors.
+It predicts the drawn and the held-out texts, and
 both are scored against the user's gold values. An entry whose ``applies`` refuses the fold's
 data is recorded as ``not_applicable: <reason>``; only ``EstimatorError`` and
 ``NotApplicableError`` from the fit or the predictions are recorded as skip rows; any other

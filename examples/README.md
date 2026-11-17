@@ -36,7 +36,7 @@ The script codes with the backend that `run` receives, and builds the fake backe
 backend = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY
 ```
 
-or build the backend yourself and pass it in with `run(Path("OUT_DIR"), backend=backend)`. The rest of the pipeline is unchanged. A real model makes metered calls to a provider that charges for them: estimate the number of calls and the cost first (see the [FAQ](../docs/faq.md#how-much-will-a-run-cost)). The toy corpus is small, so even a real model's numbers say little about your own texts.
+or build the backend yourself and pass it in with `run(Path("OUT_DIR"), backend=backend)`. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. The rest of the pipeline is unchanged. A real model makes metered calls to a provider that charges for them: estimate the number of calls and the cost first (see the [FAQ](../docs/faq.md#how-much-will-a-run-cost)). The toy corpus is small, so even a real model's numbers say little about your own texts.
 
 ## `smoke_two_stage.py`
 

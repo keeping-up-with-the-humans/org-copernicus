@@ -167,7 +167,12 @@ def generate(
         Path, typer.Option("--out", help="Reference texts, .parquet or .csv (and a .json beside).")
     ],
     model: Annotated[
-        list[str], typer.Option("--model", help="Writer model name; repeat for several writers.")
+        list[str],
+        typer.Option(
+            "--model",
+            help="Writer model name; repeat for several writers. For openai, a name with a maker "
+            "in front (maker/gpt-5-mini) is recognised by the part after the last slash.",
+        ),
     ],
     backend: Annotated[
         BackendKind, typer.Option("--backend", help=BACKEND_HELP)

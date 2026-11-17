@@ -46,6 +46,22 @@ def test_reasoning_model_omits_sampling_and_uses_completion_budget(
     assert r.seed_applied == 7
 
 
+def test_a_makers_prefix_is_sent_as_given_and_explicit_capabilities_still_override(
+    stub_client: StubClient,
+) -> None:
+    looked_up = OpenAICompatibleBackend("maker/gpt-5-mini", api_key="k", client=stub_client)
+    looked_up.generate(GenerationRequest("s", "u", 50, 0.3, 7))
+    kw = stub_client.last_kwargs
+    assert kw["model"] == "maker/gpt-5-mini"
+    assert "temperature" not in kw and "top_p" not in kw and kw["max_completion_tokens"] == 50
+    given = OpenAICompatibleBackend(
+        "maker/gpt-5-mini", api_key="k", client=stub_client, capabilities=ModelCapabilities()
+    )
+    given.generate(GenerationRequest("s", "u", 50, 0.3, 7))
+    kw = stub_client.last_kwargs
+    assert kw["temperature"] == 0.3 and kw["top_p"] == 0.9 and kw["max_tokens"] == 50
+
+
 def test_greedy_sends_temperature_zero_without_top_p(stub_client: StubClient) -> None:
     b = OpenAICompatibleBackend("gpt-4.1-mini", api_key="k", client=stub_client)
     r = b.generate(GenerationRequest("s", "u", 50, 0.0, None))

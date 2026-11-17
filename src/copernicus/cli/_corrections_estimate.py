@@ -119,7 +119,7 @@ def estimate(
         bool,
         typer.Option(
             "--long-short",
-            help="A difference of the texts above the covariate's median minus the rest.",
+            help="A difference of the texts at or above the covariate's median minus the rest.",
         ),
     ] = False,
     formula: Annotated[

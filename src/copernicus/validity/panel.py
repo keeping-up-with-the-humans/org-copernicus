@@ -17,15 +17,15 @@ from copernicus.data import TextTable
 from copernicus.errors import ConfigurationError, SettingsError
 from copernicus.validity.anatomy import COVARIATE_SCALES
 from copernicus.validity.panel_inputs import (
-    CONSTRUCT_KEYS,
     check_gold_overlap,
     check_scored_in_table,
     indexed_gold,
     numeric_column,
+    require_groups,
     resolve_covariate,
     resolve_groups,
-    resolve_target_scores,
 )
+from copernicus.validity.panel_scores import CONSTRUCT_KEYS, resolve_targets
 from copernicus.validity.panel_targets import PANEL_COLUMNS, compute_target
 from copernicus.validity.reliability import cronbach_alpha, reliability_ceiling
 from copernicus.validity.report import render_report
@@ -35,7 +35,16 @@ logger = logging.getLogger(__name__)
 __all__ = ["PanelSettings", "ValidityPanel", "validity_panel"]
 
 DIRECTIONS = ("positive", "negative", "auto")
-INTEGER_COLUMNS = ("n_used", "n_dropped_missing", "n_runs", "n", "n_boot", "n_undefined_max")
+UNITS = ("text", "group")
+INTEGER_COLUMNS = (
+    "n_used",
+    "n_texts",
+    "n_dropped_missing",
+    "n_runs",
+    "n",
+    "n_boot",
+    "n_undefined_max",
+)
 ALPHA_ROUNDING_SLACK = 1e-9
 
 
@@ -65,6 +74,20 @@ class PanelSettings:
             human coder); Cronbach's alpha of it sets the ceiling of the construct row only.
             The items belong to the gold, not to the scored texts, so their rows need not
             align with the texts. Not compared and not shown in the representation.
+        unit: ``text`` (the default) compares one score per text with the text's gold value;
+            the table's groups are then only the clusters of the bootstrap. ``group``
+            compares one score per group with the group's gold value, for a gold value that
+            belongs to the group (for example a questionnaire of the person who wrote the
+            texts). A group's score is the mean over its texts that were scored for the
+            target, each text's runs averaged first. It needs a table with a group column
+            whose ids neither merge nor split when written as text, and in a group that holds
+            a text scored for the target with a finite gold value every text with a value in
+            the gold column, scored or not, must carry the same value. The unit refuses a
+            scored text with a gold value whose run-averaged score is not finite (no run with a
+            score, or finite run scores whose average overflows) or whose covariate is missing
+            or not finite, which the text unit drops and counts. Under either unit a score row
+            of such a text without a run number, or with an infinite score, stops the panel, an
+            infinite score before the runs are averaged.
     """
 
     covariate: str | None = None
@@ -74,6 +97,7 @@ class PanelSettings:
     direction: Literal["positive", "negative", "auto"] = "positive"
     reliability: float | Mapping[str, float] | None = field(default=None, hash=False)
     items: pd.DataFrame | None = field(default=None, compare=False, repr=False)
+    unit: Literal["text", "group"] = "text"
 
     def __post_init__(self) -> None:
         """Refuse a setting outside its range or two settings that conflict.
@@ -92,6 +116,8 @@ class PanelSettings:
             )
         if self.direction not in DIRECTIONS:
             raise SettingsError(f"direction must be one of {DIRECTIONS}; got {self.direction!r}")
+        if self.unit not in UNITS:
+            raise SettingsError(f"unit must be one of {UNITS}; got {self.unit!r}")
         if isinstance(self.reliability, Mapping):
             copied = _reliability_by_column(self.reliability)
             object.__setattr__(self, "reliability", MappingProxyType(copied))
@@ -133,9 +159,11 @@ class ValidityPanel:
     Attributes:
         frame: One row per target; see `validity_panel` for the columns.
         settings: The settings used.
-        n_used: Distinct texts that entered at least one target.
+        n_used: Distinct texts that entered at least one target; texts under either unit,
+            while the ``n_used`` column of a group-unit frame counts groups.
         n_dropped_missing: Distinct texts dropped from at least one target for a missing
-            score, gold value or covariate.
+            score, gold value or covariate (under ``unit="group"`` only a missing gold value
+            drops a text).
         groups_defaulted: True when every text is its own cluster of the bootstrap: no
             table was given, or the table had no group column (``group_defaulted``), so the
             intervals treat the texts as independent.
@@ -217,12 +245,37 @@ def validity_panel(
 
     Per target the score is averaged over runs per text and compared with the gold
     column; a scored text with no gold row, or a missing score, gold or covariate value,
-    is dropped and counted in ``n_dropped_missing``, never imputed. Gold and covariate
+    is dropped and counted in ``n_dropped_missing``, never imputed. A scored text with a
+    finite gold value whose score rows hold an infinite value (also in an attribute of the
+    generated construct, which averages the finite attribute scores only and keeps the infinite
+    ones as evidence) or lack a run number stops the panel under either unit: an infinite value
+    before the target's runs are averaged per text, a missing run number before any metric is
+    computed; the message names the target, the text and, where the table has groups, its
+    group. Run numbers keep the values the frame gives them. Gold and covariate
     columns must be numeric. Text ids are compared as strings. Clusters of the bootstrap
     are the table's ``group_id`` (the text ids themselves without a table, which then
-    needs a ``covariate`` column). The output has one row per target, in the order of
-    ``targets``, with the columns: ``target``, ``gold_column``, ``n_used``,
-    ``n_dropped_missing``, ``n_runs``, ``status``, ``direction_applied``, ``n``,
+    needs a ``covariate`` column).
+
+    With ``unit="group"`` in the settings the comparison is once per group of the table's
+    ``group_id``, for a gold value that belongs to the group. A group's score is the mean
+    over its texts that were scored for the target (each text's runs averaged first), and
+    its covariate the mean of theirs: a scored text without a gold value is dropped and
+    counted and stays out of its group's mean, and a text never scored for the target does
+    not enter (``n_texts`` counts the texts that did). The group's gold value is the one
+    value that all its texts with a value in the gold column carry, scored or not. Every
+    metric, error and interval is computed on the group rows, each group its own cluster,
+    and the noise on each group's mean score in the runs that all its used texts have a
+    score for. A group that holds a text scored for the target with a finite gold value and
+    whose texts carry two gold values, a scored text with a gold value whose run-averaged score
+    is not finite (no run with a score, or finite run scores whose average overflows) or whose
+    covariate is missing or not finite (under ``"text"`` such a text is dropped and counted),
+    and group ids that merge or split when written as text stop the panel; an infinite score
+    stops it under either unit, as said above.
+
+    The output has one row per target, in the order of ``targets``, with the columns:
+    ``target``, ``gold_column``, ``unit`` (the setting), ``n_used`` and ``n_texts`` (the
+    texts or groups compared, and the texts behind them; equal under ``"text"``),
+    ``n_dropped_missing`` (texts), ``n_runs``, ``status``, ``direction_applied``, ``n``,
     ``spearman``, ``rank_validity``, ``pearson``, ``kendall``, ``auc``, ``somers_d``,
     ``mae_01``, ``signed_gap_01``, ``level_displacement``, ``calibration_shortfall``,
     ``covariate_linked_error`` (the six intervals add ``_low`` and ``_high``; the
@@ -232,12 +285,14 @@ def validity_panel(
     ``noise``, ``ceiling``, ``share_of_ceiling``,
     ``n_boot`` and ``n_undefined_max`` (largest count of undefined replicates over the
     intervals). The errors are on the 0-1 scale; the noise is the mean over the texts that
-    entered of the standard deviation across runs of their run scores, min-max scaled over
-    all those (text, run) rows (NaN without two runs). A status other than ``ok`` leaves
-    the association metrics, the errors, the intervals and ``n_boot`` missing; the noise is
-    still computed, and a constant score (``constant_score``) keeps its calibration
-    shortfall of -1 and its covariate-linked error, minus the slope of gold on the
-    covariate (see ``constant_score_errors``), unless the gold is constant too.
+    entered (or the groups, each with its mean score in the runs that all its used texts
+    have a score for) of the standard deviation across runs of their run scores, min-max
+    scaled over all those (text, run) or (group, run) rows (NaN without two runs).
+    A status other than ``ok`` leaves the association metrics, the errors, the intervals
+    and ``n_boot`` missing; the noise is still computed, and a constant score
+    (``constant_score``) keeps its calibration shortfall of -1 and its covariate-linked
+    error, minus the slope of gold on the covariate (see ``constant_score_errors``),
+    unless the gold is constant too.
 
     Args:
         scores: The score frame.
@@ -255,7 +310,17 @@ def validity_panel(
             more than one score per text, run and target, no scored text with a gold row
             (usually ids written differently on the two sides), a missing or non-numeric
             gold or covariate column, a scored text absent from the table, no table and no
-            covariate, or a reliability mapping naming a column that no target uses.
+            covariate, a reliability mapping naming a column that no target uses, or a scored
+            text with a finite gold value with an infinite score or a score row without a run
+            number (the message names the target, the text and, where the table has groups,
+            its group); and under ``unit="group"`` no
+            table, a table without a group column, group ids that merge or split when written
+            as text (the message names both ids and their types), a group that holds a text
+            scored for the target with a finite gold value and whose texts carry two gold
+            values (scored or not), or a scored text with a gold value whose run-averaged score
+            is not finite (no run with a score, or finite run scores whose average overflows)
+            or whose covariate is missing or not finite (the message names the target, the
+            group and the text).
         EstimatorError: If a bootstrap metric is undefined on more than 10 percent of the
             replicates; the message starts with the target name. The error stops the whole
             panel, so leave such a target out (for example one whose binary gold has a rare
@@ -265,8 +330,11 @@ def validity_panel(
     """
     if not targets:
         raise SettingsError("targets must name at least one target")
+    if settings.unit == "group":
+        require_groups(table)
     keys = list(targets)
-    runs_by_key = resolve_target_scores(scores, keys)
+    resolved = resolve_targets(scores, keys)
+    runs_by_key = {key: resolved[key].runs for key in keys}
     gold_by_id = indexed_gold(gold)
     gold_values = {
         column: numeric_column(gold_by_id, column, "gold") for column in set(targets.values())
@@ -277,6 +345,7 @@ def validity_panel(
         check_scored_in_table(scored_ids, table)
     covariate_name, covariate = resolve_covariate(settings.covariate, gold_by_id, table)
     groups = resolve_groups(scored_ids, table)
+    named_groups = None if table is None or table.group_defaulted else groups
     ceilings = _ceilings(targets, settings)
     results = [
         compute_target(
@@ -289,6 +358,8 @@ def validity_panel(
             groups,
             ceilings[key],
             settings,
+            infinite=resolved[key].infinite,
+            named_groups=named_groups,
         )
         for key in keys
     ]

@@ -93,11 +93,14 @@ def stacked_2sls(outcome: np.ndarray, proxy_a: np.ndarray, proxy_b: np.ndarray) 
         proxy_b: The second measurement of every text.
 
     Returns:
-        The slope, its text-clustered standard error and the two first-stage coefficients.
+        The slope, its text-clustered standard error and the two first-stage coefficients. The
+        standard error comes from each text's score row transformed by the inverse of the
+        system's matrix (a solve, then the sum of squares), so it cannot come out negative.
 
     Raises:
-        EstimatorError: If the system is singular: the instruments are collinear (a constant
-            measurement) or carry no first-stage signal.
+        EstimatorError: If the instrument matrix is rank-deficient (a measurement that does not
+            vary, or two measurements whose sizes differ by many orders of magnitude; the
+            message gives the rank) or the instruments carry no first-stage signal.
     """
     n = outcome.size
     zeros, ones = np.zeros(n), np.ones(n)
@@ -117,9 +120,13 @@ def stacked_2sls(outcome: np.ndarray, proxy_a: np.ndarray, proxy_b: np.ndarray) 
             np.concatenate([zeros, proxy_a]),
         ]
     )
-    if int(np.linalg.matrix_rank(instruments)) < instruments.shape[1]:
+    rank = int(np.linalg.matrix_rank(instruments))
+    if rank < instruments.shape[1]:
         raise EstimatorError(
-            "the 2SLS system is singular: the instruments are collinear (a measurement is constant)"
+            "the stacked two-stage system is rank-deficient: its instrument matrix has rank "
+            f"{rank} of {instruments.shape[1]}; check for a measurement that does not vary on the "
+            "texts, and for two measurements whose sizes differ by many orders of magnitude, "
+            "which you rescale to comparable sizes"
         )
     first_stage = np.linalg.solve(instruments.T @ instruments, instruments.T @ design)
     projected = instruments @ first_stage
@@ -129,13 +136,12 @@ def stacked_2sls(outcome: np.ndarray, proxy_a: np.ndarray, proxy_b: np.ndarray) 
             "the 2SLS system is singular: the instruments carry no first-stage signal"
         )
     beta = np.linalg.solve(cross, projected.T @ stacked_outcome)
-    bread = np.linalg.inv(cross)
     residual = stacked_outcome - design @ beta
     scores = projected[:n] * residual[:n, None] + projected[n:] * residual[n:, None]
-    covariance = bread @ (scores.T @ scores) @ bread.T
-    # The sandwich is positive semi-definite by construction; the clip only removes rounding
-    # below zero.
-    se = float(np.sqrt(max(float(covariance[SLOPE_COLUMN, SLOPE_COLUMN]), 0.0)))
+    # The sandwich inverse(cross) S'S inverse(cross)' as the Gram matrix of the transformed score
+    # rows: the slope's variance is a sum of squares and cannot come out negative.
+    transformed = np.linalg.solve(cross, scores.T).T[:, SLOPE_COLUMN]
+    se = float(np.sqrt(transformed @ transformed))
     return StackedFit(
         slope=float(beta[SLOPE_COLUMN]),
         se=se,
@@ -259,9 +265,9 @@ def oriv(
             ``weak_instrument_floor`` is outside its range.
         ConfigurationError: If the outcome or a measurement does not match the data.
         EstimatorError: If fewer than three texts are labelled, a reverse calibration has no
-            line, the proxies' correlation is below the floor in absolute value, the 2SLS
-            system is singular, or fewer than ``MIN_FINITE_BOOTS`` resamples have a defined
-            estimate.
+            line, the proxies' correlation is below the floor in absolute value, the stacked
+            system is rank-deficient or its instruments carry no first-stage signal, or fewer
+            than ``MIN_FINITE_BOOTS`` resamples have a defined estimate.
     """
     if score_a == score_b:
         raise SettingsError("score_a and score_b must differ: ORIV needs two measurements")

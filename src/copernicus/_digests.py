@@ -7,6 +7,10 @@ set file records ``table_hash``, the digest of its table (`table_hash`), and ref
 embeddings and an embedding set record ``arrays_hash``, the digest of their arrays
 (`arrays_hash`). A load computes the digest of what it read and refuses a payload that the
 sidecar does not name.
+
+An embedding set made by an encoder also records the texts it embedded: ``text_form``, how
+they were handed to the encoder (``"as_given"``), and ``texts_hash``, their digest
+(`texts_hash`). The texts are not stored, so a load cannot recompute it; it checks its form.
 """
 
 from __future__ import annotations
@@ -28,16 +32,26 @@ from copernicus.errors import ConfigurationError
 __all__ = [
     "ARRAYS_HASH_KEY",
     "TABLE_HASH_KEY",
+    "TEXTS_HASH_KEY",
+    "TEXT_FORM_AS_GIVEN",
+    "TEXT_FORM_KEY",
     "arrays_hash",
     "check_arrays_hash",
     "digest_problem",
     "table_hash",
+    "text_record",
+    "texts_hash",
     "without_arrays_hash",
+    "without_texts_hash",
 ]
 
 # The keys of the digests in the descriptions of the payloads.
 TABLE_HASH_KEY = "table_hash"
 ARRAYS_HASH_KEY = "arrays_hash"
+# The keys of the record of the embedded texts, and the one form the encoder hands them on in.
+TEXT_FORM_KEY = "text_form"
+TEXTS_HASH_KEY = "texts_hash"
+TEXT_FORM_AS_GIVEN = "as_given"
 DIGEST_LENGTH = 64
 DIGEST_PATTERN = re.compile(rf"[0-9a-f]{{{DIGEST_LENGTH}}}")
 MISSING_TEXT = "null"
@@ -121,6 +135,42 @@ def arrays_hash(arrays: Mapping[str, np.ndarray]) -> str:
     return digest.hexdigest()
 
 
+def texts_hash(texts: Sequence[str]) -> str:
+    """Return the SHA-256 digest of texts in their order, as an embedding set records them.
+
+    The digest is taken over ASCII text that another reader can build again: for each text,
+    in the given order, the SHA-256 digest of its UTF-8 encoding as 64 lowercase hexadecimal
+    characters (the text hash of `copernicus.coders.hash_text`); these digests concatenated
+    without a separator, which their fixed length keeps apart; the whole encoded as ASCII.
+    Every character of a text counts as it is, whitespace and case included, and another
+    text, another order or another number of texts gives another digest; no texts give the
+    digest of the empty text.
+
+    Args:
+        texts: The texts, in the order of the rows of the set.
+
+    Returns:
+        64 lowercase hexadecimal characters.
+    """
+    digest = hashlib.sha256()
+    for text in texts:
+        digest.update(hashlib.sha256(text.encode("utf-8")).hexdigest().encode("ascii"))
+    return digest.hexdigest()
+
+
+def text_record(sidecar: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the record of the embedded texts that a sidecar holds.
+
+    Args:
+        sidecar: The description of an embedding set.
+
+    Returns:
+        ``text_form`` and ``texts_hash`` with their values, each when the sidecar holds it; an
+        empty mapping for a set made by hand or by an earlier version of the library.
+    """
+    return {key: sidecar[key] for key in (TEXT_FORM_KEY, TEXTS_HASH_KEY) if key in sidecar}
+
+
 def digest_problem(key: str, value: object) -> str | None:
     """Say why a recorded digest is malformed, or return ``None`` when it has the right form.
 
@@ -194,3 +244,18 @@ def without_arrays_hash(sidecar: Mapping[str, Any]) -> dict[str, Any]:
         The other keys of the sidecar.
     """
     return {key: value for key, value in sidecar.items() if key != ARRAYS_HASH_KEY}
+
+
+def without_texts_hash(sidecar: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a copy of a sidecar without ``texts_hash``, for an object of other texts.
+
+    A subset, or a set gathered from the rows of another, holds other texts than those the
+    digest names; ``text_form`` stays, since the texts were handed on in that form.
+
+    Args:
+        sidecar: The sidecar of the object the new one was taken from.
+
+    Returns:
+        The other keys of the sidecar.
+    """
+    return {key: value for key, value in sidecar.items() if key != TEXTS_HASH_KEY}

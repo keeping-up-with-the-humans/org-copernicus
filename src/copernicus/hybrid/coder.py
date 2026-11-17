@@ -11,12 +11,15 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from copernicus._digests import without_texts_hash
 from copernicus._io import check_same_encoder
+from copernicus._load_check import LOAD_COMPARISON_KEY, compare_loads
 from copernicus.coders import export_provenance
 from copernicus.data import TextTable
 from copernicus.embeddings import EmbeddingSet, Encoder
 from copernicus.embeddings.encoder import CHECKPOINT_EVERY
 from copernicus.errors import ConfigurationError, SettingsError
+from copernicus.hybrid._loaded_encoder import check_before_the_pass
 from copernicus.hybrid.texts import GRANULARITIES, HybridTexts, evidence_texts
 from copernicus.rubric.identifiers import ROLLUP_SUFFIX
 from copernicus.rubric.model import Rubric
@@ -49,10 +52,11 @@ HYBRID_DEFAULTS = SimilaritySettings(
     long_text="pooled_embedding",
     target_level="construct",
 )
-"""The default settings of the hybrid coder, which reproduce the paper's hybrid coder: the
-vector of each whole evidence text, and each pole reduced once over the references of all
-writers. The similarity coder's own defaults, ``SimilaritySettings()``, reproduce the paper's
-similarity configuration instead."""
+"""The default settings of the hybrid coder. The vector of each whole evidence text and each
+pole reduced once over the references of all writers follow the paper's analysis code; the
+paper varied the polarity and the reduction, and net polarity with the ``pca`` reduction at
+construct level is one of the settings it ran. The similarity coder's own defaults,
+``SimilaritySettings()``, reproduce the paper's similarity configuration instead."""
 
 
 @dataclass(frozen=True, eq=False)
@@ -75,8 +79,11 @@ class HybridResult:
             ``granularity``, ``run_number``, ``min_words``, ``texts`` (the encoder of the
             evidence texts with its identity and version keys, and ``n_texts``),
             ``references`` (with the rubric hash the references were written for),
-            ``rubric_id``, ``rubric_hash``, ``store`` (its path and run information),
-            ``n_rows``, ``library_version``, and ``created_at``.
+            ``load_comparison`` (the transformers and torch versions of the evidence texts
+            and of the references, and the warnings logged for two loads that are scored
+            together; see `copernicus.similarity.scoring_provenance`), ``rubric_id``,
+            ``rubric_hash``, ``store`` (its path and run information), ``n_rows``,
+            ``library_version``, and ``created_at``.
     """
 
     frame: pd.DataFrame
@@ -86,6 +93,8 @@ class HybridResult:
 
 def _gather(unique: EmbeddingSet, rows: np.ndarray, ids: list[str]) -> EmbeddingSet:
     """Return the embeddings of the rows of ``unique``, repeated as often as asked, under new ids.
+
+    The sidecar leaves out the ``texts_hash`` of ``unique``, which names other texts.
 
     Args:
         unique: Embeddings of distinct texts.
@@ -105,7 +114,11 @@ def _gather(unique: EmbeddingSet, rows: np.ndarray, ids: list[str]) -> Embedding
         chunk_owner=owner,
         chunk_weight=unique.chunk_weight[chunk_rows],
         metadata=None,
-        sidecar={**unique.sidecar, "n_texts": len(rows), "n_chunks": len(chunk_rows)},
+        sidecar={
+            **without_texts_hash(unique.sidecar),
+            "n_texts": len(rows),
+            "n_chunks": len(chunk_rows),
+        },
     )
 
 
@@ -133,6 +146,7 @@ def _score_construct(
     Returns:
         The scores, the summary of the evidence texts, and the sidecar of their embeddings.
     """
+    check_before_the_pass(encoder, refs, texts.texts, texts.ids, checkpoint.every)
     embedded = encoder.embed(
         texts.texts, texts.ids, checkpoint=checkpoint.path, checkpoint_every=checkpoint.every
     )
@@ -208,11 +222,10 @@ def _score_attribute(
     for texts in by_attribute.values():
         for text in texts.texts:
             distinct.setdefault(text, len(distinct))
+    distinct_texts, row_ids = list(distinct), [str(row) for row in range(len(distinct))]
+    check_before_the_pass(encoder, refs, distinct_texts, row_ids, checkpoint.every)
     unique = encoder.embed(
-        list(distinct),
-        [str(row) for row in range(len(distinct))],
-        checkpoint=checkpoint.path,
-        checkpoint_every=checkpoint.every,
+        distinct_texts, row_ids, checkpoint=checkpoint.path, checkpoint_every=checkpoint.every
     )
     frames: list[pd.DataFrame] = []
     for name, texts in by_attribute.items():
@@ -263,21 +276,29 @@ def score_hybrid(
 ) -> HybridResult:
     """Score the texts through the verified passages of a two-stage run.
 
-    The default settings, `HYBRID_DEFAULTS`, reproduce the paper's hybrid coder: the
-    vector of each whole evidence text, scored against each pole reduced once over the
-    references of all writers (net polarity, first principal component, construct level).
-    The similarity coder's own defaults reproduce the paper's similarity configuration;
-    pass them, or any other settings, to score the evidence texts that way.
+    The default settings, `HYBRID_DEFAULTS`, score the vector of each whole evidence text
+    against each pole reduced once over the references of all writers, as the paper's
+    analysis code did, with net polarity, the first principal component and construct level,
+    one of the settings over which the paper varied the polarity and the reduction. The
+    similarity coder's own defaults reproduce the paper's similarity configuration; pass
+    them, or any other settings, to score the evidence texts that way.
 
     At ``"construct"`` granularity the evidence text of each text is embedded once and
     scored like any text by `copernicus.similarity.score_similarity`, so
     ``settings.target_level`` decides whether the construct poles or the attribute poles
     with their roll-up are used. At ``"attribute"`` granularity the evidence text of each
-    attribute is embedded (a string shared by several attributes, such as a raw text, goes
+    attribute is embedded (a string shared by several attributes, such as a text's own text, goes
     through the encoder once), each attribute is scored only against its own poles, and the
     attribute scores are rolled up into ``<rubric_id>__rollup`` with the reduction of
     ``settings``, for the polarity of ``settings``. Every row of the result then has
     ``target_level`` ``"attribute"`` whatever ``settings.target_level`` says.
+
+    The library's encoder, recognised by its class (`copernicus.embeddings.Encoder`, a subclass
+    included), is loaded only once the store, the table, the evidence texts and the request of
+    its pass (with the checks its embedding call makes before loading) are checked; its identity
+    and loaded runtime are then compared with the references before any text is tokenised. An
+    encoder object of one's own receives the request as given and is compared through the set
+    its pass returns; every returned set is compared again when it is scored.
 
     Args:
         store_path: Run store of a two-stage run.
@@ -292,7 +313,7 @@ def score_hybrid(
         settings: The similarity configuration; `HYBRID_DEFAULTS` by default.
         granularity: ``"construct"`` or ``"attribute"``.
         run_number: The run whose passages are read.
-        min_words: Texts with fewer words are embedded as they are.
+        min_words: Texts with fewer words are embedded as the table holds them.
         checkpoint: Checkpoint path (without suffix) of the run's one embedding pass, which
             makes a killed run resumable; see `copernicus.embeddings.Encoder.embed`.
         checkpoint_every: Chunks between two checkpoint writes.
@@ -301,11 +322,17 @@ def score_hybrid(
         The scores, the summary of the evidence texts, and the provenance of the run.
 
     Raises:
-        SettingsError: If the granularity, ``run_number`` or ``min_words`` is out of range.
+        SettingsError: If the granularity, ``run_number`` or ``min_words`` is out of range, or the
+            library's encoder is given a ``checkpoint_every`` below 1.
         ConfigurationError: If the encoder differs from the one of the references by name
             or by an identity key, including the requested revision (checked before
-            anything is embedded), or was loaded from another commit than the references
-            (known, and checked, only once the texts are embedded), the references were
+            anything is embedded), or was loaded from another commit or under transformers
+            of another major version or epoch than the references record (checked before the
+            embedding pass for the library's encoder, after it for an encoder object of one's
+            own; a smaller difference of the versions is scored with a warning and recorded
+            in the provenance), a recorded version cannot be read, the library's encoder
+            cannot be loaded or is given a request that its embedding call refuses (no text,
+            ids that repeat, an empty text; checked before it is loaded), the references were
             written for another rubric or for another content of it, or lack a pole the
             granularity scores (every target at ``"construct"``, every attribute at
             ``"attribute"``; checked before the store is read), the store does not fit the
@@ -322,8 +349,9 @@ def score_hybrid(
             f"the encoder is {encoder.spec.name!r}, the reference embeddings were made with "
             f"{refs.encoder!r}"
         )
-    # The specification records no loaded commit, so this compares the requested revision;
-    # the scorer compares the loaded commits once the evidence texts are embedded.
+    # The specification records no loaded commit and no versions, so this compares the
+    # requested identity alone, before the store is read; the loaded runtime of the library's
+    # encoder is compared before its pass, and the embedded set when it is scored.
     check_same_encoder(encoder.spec.identity(), refs.sidecar, "encoder", "reference embeddings")
     # Attribute granularity scores each attribute on its own poles; it needs no construct pole.
     attribute_ids = [attribute.attribute_id for attribute in rubric.attributes]
@@ -362,6 +390,7 @@ def score_hybrid(
             "n_texts": len(table),
         },
         "references": references_provenance(refs),
+        LOAD_COMPARISON_KEY: compare_loads(sidecar, refs.sidecar),
         **rubric_provenance(rubric),
         "store": {"path": str(store_path), **export_provenance(store_path)},
         "n_rows": len(frame),

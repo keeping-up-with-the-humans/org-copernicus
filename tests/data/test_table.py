@@ -10,6 +10,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
+import copernicus.data.table as table_module
 from copernicus.data import TextTable
 from copernicus.data.html import strip_html
 from copernicus.errors import TextTableError
@@ -24,7 +25,7 @@ def test_from_frame_renames_and_computes_lengths() -> None:
     df = pd.DataFrame({"id": [1, 2], "body": ["Hello  world", "A b c"], "writer": ["w1", "w1"]})
     t = TextTable.from_frame(df, text_id="id", text="body", group_id="writer")
     assert list(t.frame.columns)[:5] == ["text_id", "text", "group_id", "n_chars", "n_words"]
-    assert t.frame.n_words.tolist() == [2, 3] and t.text_of(1) == "Hello world"
+    assert t.frame.n_words.tolist() == [2, 3] and t.text_of(1) == "Hello  world"
     assert t.group_defaulted is False
 
 
@@ -99,10 +100,33 @@ def test_extra_columns_kept_after_guaranteed_ones() -> None:
     ]
 
 
-def test_normalised_text_drives_lengths() -> None:
+def test_the_collapsed_text_drives_the_lengths() -> None:
     t = TextTable.from_frame(pd.DataFrame({"text_id": ["a"], "text": ["  ab \n\t cd  "]}))
-    assert t.text_of("a") == "ab cd"
+    assert t.text_of("a") == "ab \n\t cd"
     assert t.frame.n_chars.tolist() == [5] and t.frame.n_words.tolist() == [2]
+
+
+def test_a_text_is_kept_as_given_with_only_its_ends_stripped() -> None:
+    frame = pd.DataFrame({"text_id": ["a"], "text": ["First line.\nSecond  line.\t End. "]})
+    table = TextTable.from_frame(frame)
+    assert table.text_of("a") == "First line.\nSecond  line.\t End."
+    assert table.frame.text.tolist() == ["First line.\nSecond  line.\t End."]
+    # The lengths are those of "First line. Second line. End.", as in the earlier version.
+    assert table.frame.n_chars.tolist() == [29] and table.frame.n_words.tolist() == [5]
+
+
+def test_collapse_whitespace_is_the_rule_of_the_lengths() -> None:
+    text = " a \n\n b\tc d e  f "
+    assert table_module.collapse_whitespace(text) == "a b c d e f" == " ".join(text.split())
+    table = TextTable.from_frame(pd.DataFrame({"text_id": ["x"], "text": [text]}))
+    assert table.text_of("x") == text.strip()
+    assert table.frame.n_chars.tolist() == [11] and table.frame.n_words.tolist() == [6]
+
+
+def test_a_text_of_whitespace_alone_is_empty() -> None:
+    frame = pd.DataFrame({"text_id": ["a", "b"], "text": ["fine text", " \n\t   "]})
+    with pytest.raises(TextTableError, match="empty text for ids 'b'"):
+        TextTable.from_frame(frame)
 
 
 def test_input_frame_not_mutated() -> None:

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 
 import numpy as np
 import pandas as pd
 import pytest
 from estimates_support import (
+    RELATIVE_TOLERANCE,
     TRUE_DIFFERENCE,
     TRUE_MEAN,
     labels_by_srs,
@@ -29,6 +31,7 @@ pytestmark = pytest.mark.filterwarnings("error")
 
 N_TEXTS = 40
 MONTE_CARLO_SEED = 5
+FLAT_ON_LABELLED = 1.25
 
 
 def _data(
@@ -151,6 +154,67 @@ def test_power_tuning_reduces_to_the_plain_estimate_when_lambda_star_is_one() ->
         assert tuned.se == pytest.approx(plain.se, abs=1e-12)
 
 
+def _on_labelled(data: CorrectionData, frame: pd.DataFrame, values: np.ndarray) -> pd.Series:
+    """The score of every text with ``values`` on the labelled rows, named ``on_labelled``."""
+    prediction = frame["score"].to_numpy().copy()
+    prediction[data.labelled_mask] = values
+    return pd.Series(prediction, index=data.ids, name="on_labelled")
+
+
+@pytest.mark.parametrize("spread", [0.0, 8e-13], ids=["constant", "constant_up_to_rounding"])
+def test_power_tuning_refuses_a_prediction_constant_on_the_labelled_rows(spread: float) -> None:
+    data, frame = _data()
+    offsets = np.linspace(-spread / 2, spread / 2, data.n_labelled)
+    prediction = _on_labelled(data, frame, FLAT_ON_LABELLED + offsets)
+    split = long_short_split(data)
+    for method, call in (
+        ("ppi_mean_tuned", lambda: mean_ppi(data, prediction=prediction, power_tuning=True)),
+        (
+            "ppi_difference_tuned",
+            lambda: group_difference_ppi(data, split, prediction=prediction, power_tuning=True),
+        ),
+    ):
+        with pytest.raises(EstimatorError, match="constant on the labelled") as refused:
+            call()
+        message = str(refused.value)
+        assert method in message and "'on_labelled'" in message
+        assert "power_tuning=False" in message
+
+
+def test_without_power_tuning_a_prediction_constant_on_the_labelled_rows_is_estimated() -> None:
+    data, frame = _data()
+    prediction = _on_labelled(data, frame, np.full(data.n_labelled, FLAT_ON_LABELLED))
+    mean = mean_ppi(data, prediction=prediction)
+    difference = group_difference_ppi(data, long_short_split(data), prediction=prediction)
+    assert (mean.point, mean.se) == pytest.approx(
+        (1.0635478079507203, 0.13858333025566294), rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+    assert (difference.point, difference.se) == pytest.approx(
+        (0.12361828721068935, 0.27978129836266813), rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+    assert mean.details["lambda_star"] == difference.details["lambda_star"] == 1.0
+
+
+def test_power_tuning_accepts_a_prediction_with_two_values_on_the_labelled_rows() -> None:
+    data, frame = _data()
+    two_values = np.where(np.arange(data.n_labelled) % 2 == 0, 1.0, 1.5)
+    prediction = _on_labelled(data, frame, two_values)
+    mean = mean_ppi(data, prediction=prediction, power_tuning=True)
+    difference = group_difference_ppi(
+        data, long_short_split(data), prediction=prediction, power_tuning=True
+    )
+    assert mean.details["lambda_star"] == difference.details["lambda_star"]
+    assert mean.details["lambda_star"] == pytest.approx(
+        0.2811213485939118, rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+    assert (mean.point, mean.se) == pytest.approx(
+        (1.013579358629051, 0.11860405735833869), rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+    assert (difference.point, difference.se) == pytest.approx(
+        (-0.06723723732530029, 0.24192085208355507), rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+
+
 def test_a_prediction_series_is_matched_by_id_and_replaces_the_score() -> None:
     data, frame = _data()
     prediction = pd.Series(frame["gold"].to_numpy() + 0.25, index=data.ids)
@@ -206,6 +270,69 @@ def test_too_few_labelled_rows_are_refused() -> None:
         group_difference_ppi(data, lonely)
 
 
+def test_a_difference_without_two_labelled_texts_on_a_side_says_so_and_what_to_do() -> None:
+    data, _ = _data(labelled_every=2)
+    lonely = np.zeros(N_TEXTS, dtype=bool)
+    lonely[0] = True
+    with pytest.raises(EstimatorError) as refused:
+        group_difference_ppi(data, lonely)
+    assert str(refused.value) == (
+        "the prediction-powered difference needs at least 2 labelled rows on each side; there "
+        "are 1 on one side: label more texts on that side, or use a grouping that puts at least "
+        "2 labelled texts on each side"
+    )
+
+
+@pytest.mark.parametrize(
+    ("call", "values", "message"),
+    [
+        (
+            plugin_value,
+            [],
+            "the estimand needs at least 1 values; there are 0; provide more values",
+        ),
+        (
+            naive_se,
+            [2.5],
+            "the estimand needs at least 2 values; there are 1; provide more values",
+        ),
+    ],
+    ids=["plugin_value", "naive_se"],
+)
+def test_too_few_values_are_refused_with_their_number_and_what_to_do(
+    call: Callable[..., float], values: list[float], message: str
+) -> None:
+    with pytest.raises(EstimatorError) as refused:
+        call(np.asarray(values, dtype=float))
+    assert str(refused.value) == message
+
+
+@pytest.mark.parametrize(
+    ("call", "split", "message"),
+    [
+        (
+            plugin_value,
+            [True, True, True],
+            "the estimand needs at least 1 values on each side; the sides hold [3, 0]; "
+            "provide more values on the side with too few, or choose another grouping",
+        ),
+        (
+            naive_se,
+            [True, True, False],
+            "the estimand needs at least 2 values on each side; the sides hold [2, 1]; "
+            "provide more values on the side with too few, or choose another grouping",
+        ),
+    ],
+    ids=["plugin_value", "naive_se"],
+)
+def test_too_few_values_on_a_side_are_refused_with_the_sides_and_what_to_do(
+    call: Callable[..., float], split: list[bool], message: str
+) -> None:
+    with pytest.raises(EstimatorError) as refused:
+        call(np.array([1.0, 2.0, 4.0]), np.array(split))
+    assert str(refused.value) == message
+
+
 def test_a_group_must_be_boolean_and_match_the_data() -> None:
     data, _ = _data()
     split = long_short_split(data)
@@ -222,15 +349,24 @@ def test_a_group_must_be_boolean_and_match_the_data() -> None:
         group_difference_ppi(data, by_id.astype(float))
 
 
-def test_the_long_short_split_is_strictly_above_the_median_covariate() -> None:
+def test_the_long_short_split_counts_a_text_at_the_median_as_long() -> None:
     data, frame = _data()
     covariate = frame["log_chars"].to_numpy()
     split = long_short_split(data)
     assert split.dtype == bool
-    np.testing.assert_array_equal(split, covariate > np.median(covariate))
-    tied = frame.assign(log_chars=np.r_[np.zeros(21), np.ones(19)])
+    np.testing.assert_array_equal(split, covariate >= np.median(covariate))
+    for values, expected in (
+        ([1.0, 2.0, 2.0, 3.0], [False, True, True, True]),
+        ([1.0, 2.0, 3.0, 4.0], [False, False, True, True]),
+        ([3.0, 1.0, 2.0], [True, False, True]),
+    ):
+        few = CorrectionData(
+            frame=frame.iloc[: len(values)].assign(log_chars=values), score_columns=("score",)
+        )
+        assert long_short_split(few).tolist() == expected, values
+    tied = frame.assign(log_chars=np.r_[np.zeros(19), np.ones(21)])
     tied_data = CorrectionData(frame=tied, score_columns=("score",))
-    assert long_short_split(tied_data).sum() == 19
+    assert long_short_split(tied_data).sum() == 21
 
 
 def test_ppi_covers_the_truth_in_300_draws_while_the_raw_difference_is_biased() -> None:

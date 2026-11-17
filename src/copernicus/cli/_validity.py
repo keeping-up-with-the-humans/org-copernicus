@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
+from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -43,6 +44,16 @@ SCORE_ID_COLUMNS = (TEXT_ID, "attribute_id", "target_id", "target_level")
 validity_app = typer.Typer(
     help="Validity of coder scores against gold values.", no_args_is_help=True
 )
+
+
+class PanelUnit(str, Enum):
+    """The units of the comparison selectable on the command line (``PanelSettings.unit``)."""
+
+    TEXT = "text"
+    GROUP = "group"
+
+
+DEFAULT_UNIT = PanelUnit(DEFAULTS.unit)
 
 
 def _scores_frame(store: Path | None, scores: Path | None) -> pd.DataFrame:
@@ -103,6 +114,7 @@ def _settings_mapping(settings: PanelSettings) -> dict[str, Any]:
         "seed": settings.seed,
         "direction": settings.direction,
         "reliability": dict(reliability) if isinstance(reliability, Mapping) else reliability,
+        "unit": settings.unit,
     }
 
 
@@ -177,6 +189,16 @@ def panel(
             f"negative); default {DEFAULTS.direction}.",
         ),
     ] = DEFAULTS.direction,
+    unit: Annotated[
+        PanelUnit,
+        typer.Option(
+            "--unit",
+            help="'text' compares one score per text with its gold value; 'group' compares one "
+            "score per group, the mean over its texts that were scored for the target, with the "
+            "group's gold value, for a gold value that belongs to the group, and needs a group "
+            f"column; default {DEFAULTS.unit}.",
+        ),
+    ] = DEFAULT_UNIT,
     reliability: Annotated[
         list[str] | None,
         typer.Option(
@@ -224,6 +246,7 @@ def panel(
             "seed": seed,
             "direction": direction,
             "reliability": parse_reliability(reliability or []),
+            "unit": unit.value,
         }
         settings = PanelSettings(**options)
         score_frame = _scores_frame(store, scores)

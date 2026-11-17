@@ -2,7 +2,7 @@
 
 A failed extraction leaves its attribute without passages, so the evidence text would lack them
 and a text left without any passage would pass for one without evidence. A short text keeps its
-raw text whatever its passages, and a failed scoring leaves the passages in place: such texts
+own text whatever its passages, and a failed scoring leaves the passages in place: such texts
 stay scoreable, with the fallbacks and counts of a run without failures.
 """
 

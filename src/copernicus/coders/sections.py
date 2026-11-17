@@ -159,23 +159,25 @@ def level_descriptions_section(attribute: Attribute, order: Sequence[str]) -> st
 def subrubrics_section(attribute: Attribute, order: Sequence[str]) -> str:
     """Build the sub-rubric of every marker as a level-to-description mapping.
 
-    The levels run from 5 down to 1, the order in which the extraction prompt lists
-    the level descriptions.
+    The levels of each marker run in its `copernicus.rubric.model.Marker.level_order`, the
+    order in which the rubric file lists them; a marker built in code lists them in the level
+    order it is given, by default (without ``level_order``) from 5 down to 1, the order in which
+    the extraction prompt lists the level descriptions.
 
     Args:
         attribute: Attribute that owns the markers.
         order: Marker names in prompt order.
 
     Returns:
-        One ``name: {5: '...', 4: '...', ..., 1: '...'}`` line per marker, with the
-        mapping written in Python dictionary notation.
+        One ``name: {1: '...', 2: '...', ..., 5: '...'}`` line per marker, the levels in the
+        marker's level order, with the mapping written in Python dictionary notation.
 
     Raises:
         PromptContractError: If ``order`` is not a permutation of the marker names.
     """
     lines: list[str] = []
     for marker in ordered_markers(attribute, order):
-        levels = {number: marker.level(number).description for number in reversed(LEVEL_NUMBERS)}
+        levels = {number: marker.level(number).description for number in marker.level_order}
         lines.append(f"{marker.name}: {levels}")
     return "\n".join(lines)
 

@@ -8,7 +8,7 @@ The similarity coder scores a text by how close its embedding lies to two sets o
 - **No GPU and no API key.** The encoder is MiniLM on the CPU; the first run downloads its weights (about 90 MB). The reference texts are written by hand here, so no writer model is called.
 - A rubric and a text table: the toy ones that ship with the package.
 
-For a real study, a writer model produces the reference texts. This is a snippet to read, not to run; it makes paid calls when the backend is a paid one:
+For a real study, a writer model produces the reference texts. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. This is a snippet to read, not to run; it makes paid calls when the backend is a paid one:
 
 ```python
 writer = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY
@@ -64,7 +64,7 @@ print(estimate.calls)
 48
 ```
 
-There are 24 cells (the construct and three attributes, two poles, three levels) for each of two writers. The estimate also holds `prompt_tokens`, `completion_tokens` and, through `estimate.cost(price_input, price_output)`, a cost for the per-million-token prices that you read off your provider's price list. The [FAQ](../faq.md#how-much-will-a-run-cost) has the formula. On the command line, `copernicus references generate --dry-run` prints the same numbers and stops.
+There are 24 cells (the construct and three attributes, two poles, three levels) for each of two writers. The estimate also holds `prompt_tokens`, `completion_tokens` and, through `estimate.cost(price_input, price_output)`, a cost for the per-million-token prices that you read off your provider's price list. The [FAQ](../faq.md#how-much-will-a-run-cost) has the formula. On the command line, `copernicus references generate --rubric rubric.json --out refs.parquet --model gpt-4.1-mini --model gpt-4.1 --dry-run` prints the same numbers for two writers and stops.
 
 ### Step 3: write a reference set by hand
 
@@ -250,14 +250,14 @@ Add `--grid paper` to `similarity score` for the paper's 144 settings. A descrip
 
 ## What the output means
 
-- **A higher net score means closer to the positive pole than to the negative pole.** The scale depends on the reduction. A `mean` or `max` score is a difference of cosines. A `pca` score is the first principal component of the standardised cosines, signed so that higher means more similar to the pole.
+- **A higher net score means closer to the positive pole than to the negative pole.** The scale depends on the reduction. A `mean` or `max` score is a difference of cosines. A `pca` score comes from the first principal component of the standardised cosines; its sign is set so that the scores of the decomposition do not correlate negatively with the mean cosine of each text, before texts with equal rows are given one score.
 - **A `pca` score depends on the texts you score together.** The standardisation runs over the texts of the call, so `pca` scores of two corpora are not on one scale. `mean` and `max` scores do not depend on the other texts.
 - **The score ranks texts; it has no unit.** Use the [validity panel](validity-panel.md) to see how well it ranks against gold values, and the corrections to put it on the gold scale.
 
 ## Pitfalls
 
 - **References belong to one content of the rubric.** Edit the rubric, even under the same ids, and the coders refuse its references. Regenerate them, or build a hand-written set again with `ReferenceSet.for_rubric`.
-- **Texts and references must come from one encoder and one model commit.** Embed both with the same `Encoder`. A model repository gets a new commit when only its documentation changes, so sets embedded a month apart can disagree; pin a commit (pass `dataclasses.replace(cop.ENCODERS["minilm"], revision="<commit>")` to `Encoder`, or add `--revision <commit>` on the command line), or re-embed.
+- **Texts and references must come from one encoder, one model commit and one major version of transformers.** Embed both with the same `Encoder` in one environment. A model repository gets a new commit when only its documentation changes, so sets embedded a month apart can disagree; pin a commit (pass `dataclasses.replace(cop.ENCODERS["minilm"], revision="<commit>")` to `Encoder`, or add `--revision <commit>` on the command line), or re-embed. Two releases of one major version of transformers, two versions of torch, or a set without versions, such as one built by hand, is scored with a warning, and `cop.similarity.scoring_provenance` and the description file of `similarity score` record the versions of both sides under `load_comparison`.
 - **Write balanced, complete references.** Every pole needs texts, and a writer's positive and negative texts for a target should match in number. `summary()["balance"]` tells you.
 - **A reference should fit in one window of the encoder.** A longer reference is represented by the token-weighted mean of its chunks, and the library warns.
 - **Do not copy the rubric's wording into the references.** Generated sets pass a leakage screen that flags such texts. A hand-written set has no screen.

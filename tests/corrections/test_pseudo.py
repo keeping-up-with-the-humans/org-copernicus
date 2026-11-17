@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import numpy as np
 import pandas as pd
 import pytest
+from estimates_support import RELATIVE_TOLERANCE
 
 from copernicus.corrections import (
     REGISTRY,
@@ -19,7 +20,11 @@ from copernicus.corrections import (
     population_hash_of,
 )
 from copernicus.corrections.families._crossfit_ghat import crossfit_ghat
-from copernicus.corrections.families.pseudo import PseudoValues, pseudo_values
+from copernicus.corrections.families.pseudo import (
+    PseudoValues,
+    pseudo_values,
+    tuning_coefficient,
+)
 from copernicus.errors import ConfigurationError, EstimatorError, SettingsError
 
 pytestmark = pytest.mark.filterwarnings("error")
@@ -117,17 +122,74 @@ def test_lambda_star_uses_population_moments_and_the_tuned_mean_follows() -> Non
     assert result.lambda_star == pytest.approx(covariance / float(np.var(f_lab)), abs=1e-12)
     tuned = y_lab.mean() + result.lambda_star * (drawn_data.frame["score"].mean() - f_lab.mean())
     assert result.mean_rectified_tuned == pytest.approx(float(tuned), abs=1e-12)
+    assert result.lambda_star_reason is None and result.mean_rectified_tuned_reason is None
 
 
-def test_lambda_star_is_one_when_the_score_is_constant_on_the_labelled_rows() -> None:
+def test_the_tuned_mean_is_undefined_when_the_score_is_constant_on_the_labelled_rows(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     data, gold = _pool((2,) * 6)
-    frame = data.frame.assign(flat=3.0)
-    flat = CorrectionData(frame=frame, score_columns=("flat",))
-    drawn_data, _ = _drawn_data(flat, gold, ["g0", "g2"])
-    result = pseudo_values(drawn_data)
-    assert result.lambda_star == 1.0
-    labelled_mean = float(drawn_data.gold[drawn_data.labelled_mask].mean())
-    assert result.mean_rectified_tuned == pytest.approx(labelled_mean)
+    flat = np.where(np.isin(data.groups, ["g0", "g2"]), 3.0, data.frame["score"].to_numpy())
+    flat_data = CorrectionData(frame=data.frame.assign(flat=flat), score_columns=("flat",))
+    drawn_data, _ = _drawn_data(flat_data, gold, ["g0", "g2"])
+    with caplog.at_level(logging.WARNING, logger="copernicus.corrections.families.pseudo"):
+        result = pseudo_values(drawn_data)
+    assert np.isnan(result.lambda_star) and np.isnan(result.mean_rectified_tuned)
+    (warning,) = [record.getMessage() for record in caplog.records]
+    assert "constant on the labelled" in warning and "mean_rectified_tuned" in warning
+    assert (result.mean_plugin, result.mean_rectified) == pytest.approx(
+        (3.5526173808068395, 2.4550612607506475), rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+    constant = "the prediction is constant on the labelled rows (4 rows, each is 3.0)"
+    assert result.lambda_star_reason == (
+        f"The tuning weight cov(gold, ghat) / var(ghat) is undefined because {constant}."
+    )
+    assert result.mean_rectified_tuned_reason == (
+        f"The tuned mean is missing because its weight is undefined, as {constant}."
+    )
+
+
+def test_the_reason_of_the_tuned_mean_names_both_of_its_causes() -> None:
+    data, gold = _pool((2,) * 6)
+    labelled = np.arange(len(data.frame)) < 6
+    frame = data.frame.assign(
+        flat=np.where(labelled, 3.0, data.frame["score"].to_numpy()),
+        gold=np.where(labelled, gold.to_numpy(), np.nan),
+        pi=np.where(np.arange(len(data.frame)) < 2, 0.25, 0.5),
+    )
+    result = pseudo_values(CorrectionData(frame=frame, score_columns=("flat",)))
+    assert np.isnan(result.lambda_star) and np.isnan(result.mean_rectified_tuned)
+    assert result.lambda_star_reason is not None and "(6 rows" in result.lambda_star_reason
+    assert result.mean_rectified_tuned_reason == (
+        "The tuned mean is missing because its weight is undefined, as the prediction is "
+        "constant on the labelled rows (6 rows, each is 3.0), and because it weights every "
+        "labelled text alike and so needs one inclusion probability on the labelled rows, "
+        "where pi ranges from 0.25 to 0.5."
+    )
+
+
+@pytest.mark.parametrize(
+    "ghat",
+    [np.full(4, 3.0), 3.0 + np.array([0.0, 4e-13, -4e-13, 1e-13])],
+    ids=["constant", "constant_up_to_rounding"],
+)
+def test_the_tuning_coefficient_is_refused_for_a_constant_prediction(ghat: np.ndarray) -> None:
+    with pytest.raises(EstimatorError, match="constant on the labelled rows"):
+        tuning_coefficient(ghat, np.array([1.0, 2.0, 4.0, 3.0]))
+
+
+def test_the_tuning_coefficient_refuses_an_empty_set_of_labelled_rows() -> None:
+    with pytest.raises(EstimatorError, match="no labelled row was given"):
+        tuning_coefficient(np.array([]), np.array([]))
+
+
+def test_the_tuning_coefficient_has_no_floor_and_no_cap() -> None:
+    gold = np.array([1.0, 2.0, 4.0, 3.0])
+    assert tuning_coefficient(-gold, gold) == -1.0
+    assert tuning_coefficient(0.25 * gold + 1.0, gold) == 4.0
+    assert tuning_coefficient(np.array([1.0, 1.0, 2.0, 2.0]), gold) == 2.0
+    spread_less = np.array([-0.5, -0.5, 0.5, 0.5])
+    assert tuning_coefficient(spread_less, np.array([-1.0, 1.0, -1.0, 1.0])) == 0.0
 
 
 def test_the_tuned_mean_is_undefined_when_pi_differs_across_the_labelled_rows(
@@ -144,8 +206,14 @@ def test_the_tuned_mean_is_undefined_when_pi_differs_across_the_labelled_rows(
     assert np.isnan(result.mean_rectified_tuned)
     assert np.isfinite(result.mean_rectified) and np.isfinite(result.lambda_star)
     assert any("pi" in record.getMessage() for record in caplog.records)
+    assert result.lambda_star_reason is None
+    assert result.mean_rectified_tuned_reason == (
+        "The tuned mean is missing because it weights every labelled text alike and so needs "
+        "one inclusion probability on the labelled rows, where pi ranges from 0.25 to 0.5."
+    )
     equal = CorrectionData(frame=frame.assign(pi=0.5), score_columns=data.score_columns)
-    assert np.isfinite(pseudo_values(equal, score_column="score").mean_rectified_tuned)
+    defined = pseudo_values(equal, score_column="score")
+    assert np.isfinite(defined.mean_rectified_tuned) and defined.mean_rectified_tuned_reason is None
 
 
 def test_a_full_draw_returns_the_gold_mean() -> None:

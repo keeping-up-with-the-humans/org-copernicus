@@ -6,7 +6,7 @@ The corrected values aim at best guesses for single texts, which the fitted ridg
 
 ## The algorithm as the library implements it
 
-1. **Embeddings.** The vectors come from one embedding set of the data (`encoder=<name>`) or from every set concatenated (`encoder="stacked"`, the default, which needs at least two sets; with a single encoder, pass its name). Every text of the data must be in each set with a finite vector. Each set is z-scored on the training rows (a constant column keeps standard deviation 1); stacked sets are weighted by `sqrt(mean_dim / dim)` so that each contributes the same total variance.
+1. **Embeddings.** The vectors come from one embedding set of the data (`encoder=<name>`) or from every set concatenated (`encoder="stacked"`, the default, which needs at least two sets; with a single encoder, pass its name). Every text of the data must be in each set with a finite vector. Each set is z-scored on the training rows (a column whose computed standard deviation is exactly zero is divided by 1; a constant column adds no variance after scaling, though rounding can leave it at a constant value other than zero); stacked sets are weighted by `sqrt(mean_dim / dim)`, with `dim` the number of columns of a set, constant ones included, and `mean_dim` its mean over the sets. Each set then contributes the same total variance when no column of any set is constant on the training rows.
 2. **Variants**, each a ridge regression with an unpenalised intercept:
     - `embeddings_only`: the gold on the embeddings. It reads no score, so it is the yardstick for what the coder's score adds.
     - `embeddings_plus_score`: the gold on the embeddings and the best score column, the score standardised with its mean and population standard deviation over the training rows and penalised like the embeddings.
@@ -90,10 +90,12 @@ With 27 labelled texts the small encoder adds little: the embeddings alone are o
 
 ## Where the library departs from the paper's analysis code
 
-- `embeddings_plus_score` standardises the appended score on the training rows; the paper's analysis code appended the raw score, which was harmless there because its scores shared one rating scale. The library receives scores on any scale, and a raw column would make the result and the chosen penalty depend on the score's units.
+- `embeddings_plus_score` standardises the appended score on the training rows; the paper's analysis code appended the score in its own units, so the score's spread set how strongly the penalty shrank it relative to the embedding features. With the score standardised, the result and the chosen penalty do not depend on the score's units.
 - A non-finite value in an embedding vector is refused.
 - The penalty curve of each deletion holds mean squared errors; the paper's analysis code summed the squared errors. The chosen penalty and the edge shares are the same.
 - Every variant decomposes the retained design of every deletion afresh, and the variants do not share these decompositions; in the battery, which fits all three variants on every fold, this is the largest cost.
+- A stacked set is z-scored per column and each encoder's block is weighted by `sqrt(mean_dim / dim)`, which gives the encoders the same total variance when no column of any of them is constant on the training rows; the paper's analysis code z-scored the concatenated columns without weights, so an encoder with more dimensions carried more of the design's variance.
+- The grouped deletions follow a seed drawn from the fit's generator (`inner_seed`); the paper's analysis code split the groups with the generator of the outer fold itself, so the same seed gives other deletions and can give another penalty.
 
 ## Literature
 

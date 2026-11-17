@@ -152,8 +152,12 @@ def evaluate_attribute(
 ) -> AttributeResult:
     """Code one attribute of one text with the two-stage LLM coder.
 
-    The text is used as given (the caller normalises whitespace). A text
-    shorter than ``config.min_chars`` after stripping is not sent to the model.
+    The text is sent as given, its line breaks and runs of whitespace included; the runner
+    passes the text of the table, whose ends are stripped. A text with fewer than
+    ``config.min_chars`` characters, whitespace at its ends not counted, is not sent to the
+    model. The passages are checked against the normalised text, in which every run of
+    whitespace is one space (see `copernicus.coders.evidence.process_extraction`), so a
+    passage that spans a line break is found whether the model copies the break or a space.
     The extraction stage makes up to ``config.max_retries`` attempts with seed
     ``seed + attempt`` and a temperature that rises by
     ``config.retry_temperature_step`` per further attempt, capped at
@@ -166,7 +170,7 @@ def evaluate_attribute(
 
     Args:
         backend: The LLM backend.
-        text: The text to code.
+        text: The text to code, as it is sent to the model.
         ctx: Prompt context: rubric, attribute, marker order, and wording.
         config: Retry, budget, and verification settings.
         temperature_stage1: Design temperature of the extraction stage.

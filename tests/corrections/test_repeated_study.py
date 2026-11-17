@@ -196,8 +196,13 @@ def test_the_study_stops_only_when_every_row_is_undefined() -> None:
     crossfit = table[table["estimator"] == "ppi_crossfit"]
     assert (crossfit["status"] == "undefined_share_exceeded").all()
     assert (crossfit["n_undefined"] == 5).all()
+    # By default the draw of one group is refused by the clustering rule before the cross-fit,
+    # as ppi_identity refuses it; with cluster=False the cross-fit refuses it for its folds.
+    options = {"truth_gold": "truth", "sizes": (10,), "draws": 5, "estimators": ("ppi_crossfit",)}
+    with pytest.raises(EstimatorError, match=r"every row.*clustering needs at least two groups"):
+        repeated_study(data, **options)  # type: ignore[arg-type]
     with pytest.raises(EstimatorError, match=r"every row.*inner_groups_below_k"):
-        repeated_study(data, truth_gold="truth", sizes=(10,), draws=5, estimators=("ppi_crossfit",))
+        repeated_study(data, **options, cluster=False)  # type: ignore[arg-type]
 
 
 def test_the_cluster_option_reaches_the_prediction_powered_estimates() -> None:
@@ -264,10 +269,12 @@ def test_the_truth_column_must_be_complete_and_numeric() -> None:
         )
 
 
-def test_a_covariate_without_two_halves_is_refused() -> None:
+def test_a_covariate_without_two_sides_is_refused() -> None:
+    # A constant covariate puts every text at the median, so every text is long and the short
+    # side is empty.
     data = _full_data()
     flat = CorrectionData(frame=data.frame.assign(log_chars=1.0), score_columns=data.score_columns)
-    with pytest.raises(EstimatorError, match="each side"):
+    with pytest.raises(EstimatorError, match="each side.*the sides hold 120 and 0"):
         repeated_study(flat, truth_gold="truth", sizes=(10,), draws=2)
 
 

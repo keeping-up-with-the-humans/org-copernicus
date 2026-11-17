@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from copernicus.coders.store_cells import listed_ids
 from copernicus.coders.store_layout import check_layout
 from copernicus.coders.store_schema import (
     ATTRIBUTE_FIELDS,
@@ -28,6 +29,7 @@ from copernicus.coders.store_schema import (
     quote,
     read_run_info,
 )
+from copernicus.errors import ConfigurationError
 
 logger = logging.getLogger(__name__)
 
@@ -187,7 +189,9 @@ def construct_scores(numeric: pd.DataFrame) -> pd.DataFrame:
     """Return the construct score per text and run from a numeric long table.
 
     The construct score is the mean of the attribute scores that are not missing, which is
-    the single definition used by the exports and by the validity panel.
+    the single definition used by the exports and by the validity panel. Every row needs its
+    run number, which every row of a store written by the library holds: the grouping by run
+    would leave a row without one out without notice, so such a row is refused.
 
     Args:
         numeric: One row per text, run and attribute with columns ``text_id``,
@@ -197,7 +201,19 @@ def construct_scores(numeric: pd.DataFrame) -> pd.DataFrame:
         Columns ``text_id``, ``run_number``, ``construct_score`` (NaN when no attribute
         score exists) and ``n_attributes_scored`` (how many scores entered the mean),
         sorted by text and run.
+
+    Raises:
+        ConfigurationError: If a row has no run number, naming its texts (the first ten) and
+            what to do.
     """
+    lacking = pd.isna(numeric["run_number"]).to_numpy()
+    if lacking.any():
+        texts = sorted({str(text_id) for text_id in numeric.loc[lacking, "text_id"]})
+        raise ConfigurationError(
+            f"score row(s) of text(s) {listed_ids(texts)} have no run number, so construct_scores "
+            "cannot tell which of the text's runs they belong to; give every score row its run "
+            "number, or drop such rows to leave their scores out"
+        )
     grouped = numeric.groupby(["text_id", "run_number"], sort=True)["value"]
     table = pd.DataFrame(
         {

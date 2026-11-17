@@ -36,6 +36,12 @@ KEPT = (
 )
 NEW_TEXT = "The package arrived on Tuesday near the eastern gate."
 SETTINGS = CodingSettings(runs=1, temperature=0.3)
+# The refusal says why a text with whitespace between its words may differ, and what to do.
+WHITESPACE_HINT = (
+    "a text with a line break, a tab, a run of spaces or other whitespace between its words "
+    "also differs between a store coded by an earlier version of the library, which sent every "
+    "text with every run of whitespace collapsed to one space, and a store of this version"
+)
 
 
 @pytest.fixture
@@ -110,7 +116,7 @@ def test_a_source_that_changed_after_the_preflight_is_refused_inside_the_copy(
         merge_stores([first, second], target)
     message = str(refused.value)
     assert str(second) in message and str(target) in message and IN_THE_COPY in message
-    assert "1 text id: 't052')" in message and KEPT in message
+    assert "1 text id: 't052')" in message and KEPT in message and WHITESPACE_HINT in message
     assert rows_of(target) == rows_of(first)
     # As the message says: merging the store copied before again changes nothing.
     merge_stores([first], target)

@@ -29,6 +29,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import get_args
 
+from copernicus.coders.level_orders import level_order_settings
 from copernicus.coders.rotation import WordingPool, load_wording_pool, select, text_key
 from copernicus.coders.runner_jobs import (
     AttributeEvaluator,
@@ -41,7 +42,7 @@ from copernicus.coders.runner_scope import Scope, plan_scope
 from copernicus.coders.runner_settings import CodingSettings, CodingSummary, resolve_temperature
 from copernicus.coders.store import RunIdentity, RunStore, identity_settings
 from copernicus.coders.store_cells import FAILURE_STATUSES
-from copernicus.coders.text_hash import hash_text
+from copernicus.coders.text_hash import collapsed_hash, hash_text
 from copernicus.coders.two_stage_types import AttributeResult, Status
 from copernicus.data.table import TextTable
 from copernicus.errors import BackendError, RunFailureCeilingError, StoreError, TextTableError
@@ -90,8 +91,14 @@ def _identity(
     pool: WordingPool,
     temperature: float,
 ) -> RunIdentity:
-    """Build the identity of the store from the settings that fix what the results mean."""
+    """Build the identity of the store from the settings that fix what the results mean.
+
+    The one-stage prompt follows the level order of each marker, which the rubric hash does not
+    see, so a one-stage identity adds `copernicus.coders.level_orders.level_order_settings`; the
+    two-stage prompts do not depend on it.
+    """
     config = settings.two_stage if settings.method == "two_stage" else settings.one_stage
+    orders = level_order_settings(rubric) if settings.method == "one_stage" else {}
     return RunIdentity(
         method=settings.method,
         model_name=backend.info().model_name,
@@ -100,6 +107,7 @@ def _identity(
         rubric_hash=rubric.content_hash(),
         settings={
             **identity_settings(config, pool),
+            **orders,
             "shuffle_markers": str(settings.shuffle_markers),
             **_backend_settings(backend),
         },
@@ -220,9 +228,10 @@ def code_texts(
     ``settings.text_range``; with the run numbers 1 to ``settings.runs`` they form the
     requested scope. A cell of the scope that the store does not hold is coded; a stored
     cell is kept, unless it holds a failed attribute and ``settings.retry_failed`` is set,
-    in which case it is coded again and replaces the stored one. Before any backend call,
-    the text hash of every text of the range is compared with the stored cells of its id,
-    so a store never keeps results of another text under an id. Rows are written every
+    in which case it is coded again and replaces the stored one. The coder sends each text
+    as the table keeps it, with its line breaks. Before any backend call, the text hash of
+    every text of the range is compared with the stored cells of its id, so a store never
+    keeps results of another text under an id. Rows are written every
     ``settings.save_every`` texts and at the end, so an interrupted run loses at most the
     current batch and resumes from the store. If the backend raises a
     `copernicus.errors.BackendError`, the cells of the current batch that finished
@@ -252,10 +261,13 @@ def code_texts(
         PromptContractError: If the wording selection of the settings leaves a dimension
             without a variant or names an unknown variant.
         StoreError: If the existing store belongs to another run identity (the message
-            explains the rule when ``temperature="auto"`` caused the mismatch), was made by
-            an earlier version of the library or changed by hand, or holds a cell of a text of
-            the range that was coded on another text (the first ten ids are named; nothing is
-            coded).
+            explains the rule when ``temperature="auto"`` caused the mismatch, and says that
+            the one-stage prompt has changed when a one-stage store was coded with the levels
+            of a marker in another order, as an earlier version of the library listed them for
+            every rubric), was made by an earlier version of the library or changed by hand,
+            or holds a cell of a text of the range that was coded on another text, or on the
+            text with its whitespace collapsed, as an earlier version of the library coded
+            every text (the first ten ids of each kind are named; nothing is coded).
         BackendError: If the backend fails; the finished cells are already written, and
             the type, ``attempts``, and ``last_output`` of the backend's error are kept.
         RunFailureCeilingError: If the share of extraction and scoring failures exceeds
@@ -272,14 +284,22 @@ def code_texts(
         backend, settings.method, settings.two_stage, settings.one_stage, temperature
     )
     texts = _ordered_texts(table, settings.text_range)
-    hashes = {text_id: hash_text(table.text_of(raw_id)) for text_id, raw_id in texts}
+    sent = {text_id: table.text_of(raw_id) for text_id, raw_id in texts}
+    hashes = {text_id: hash_text(text) for text_id, text in sent.items()}
+    collapsed = {text_id: collapsed_hash(text) for text_id, text in sent.items()}
     identity = _identity(rubric, backend, settings, pool, temperature)
     early_ceiling_calls = max(
         EARLY_CEILING_MIN_CALLS, settings.save_every * settings.runs * len(rubric.attributes)
     )
     with _open_store(path, rubric, identity, settings) as store:
         scope = plan_scope(
-            texts, hashes, settings.runs, store.completed_cells(), settings.retry_failed, path
+            texts,
+            hashes,
+            collapsed,
+            settings.runs,
+            store.completed_cells(),
+            settings.retry_failed,
+            path,
         )
         totals = _Totals(scope)
         store.record_wording(pool)
@@ -290,7 +310,7 @@ def code_texts(
                     rubric,
                     pool,
                     text_id=text_id,
-                    text=table.text_of(raw_id),
+                    text=sent[text_id],
                     text_key=text_key(raw_id),
                     run_number=run,
                     run_seed=settings.seed,

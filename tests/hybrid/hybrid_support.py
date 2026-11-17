@@ -1,16 +1,18 @@
-"""Helpers of the hybrid coder tests: a model-free encoder and hand-built references."""
+"""Helpers of the hybrid coder tests: a model-free encoder, the library's encoder with a loader
+that fails, and hand-built references."""
 
 from __future__ import annotations
 
 import zlib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 import pandas as pd
 
-from copernicus.embeddings import EmbeddingSet, EncoderSpec
+from copernicus.embeddings import EmbeddingSet, Encoder, EncoderSpec
+from copernicus.errors import ConfigurationError
 from copernicus.rubric.model import Rubric
 from copernicus.similarity import ReferenceEmbeddings
 
@@ -36,6 +38,7 @@ EVIDENCE_COLUMNS = (
     "duplicate_of",
     "used_in_stage2",
 )
+LOADER_FAILURE = "the stand-in loader was asked to load the encoder"
 
 
 class StubEncoder:
@@ -80,6 +83,25 @@ class StubEncoder:
             metadata=None,
             sidecar={**self.spec.identity(), "resolved_revision": "stub-commit"},
         )
+
+
+def encoder_with_failing_loader() -> tuple[Encoder, list[str]]:
+    """Return the library's encoder, whose loader records each call and fails, and the calls.
+
+    The encoder keeps its own embedding call, so the checks that the call makes before it
+    loads run as they do for a user. A load, whether the embedding call or the hybrid coder
+    asks for it, is recorded and fails with `LOADER_FAILURE`, as a load that cannot find its
+    model does. No model is loaded, and torch is not needed.
+    """
+    encoder = Encoder(StubEncoder().spec)
+    loads: list[str] = []
+
+    def load() -> NoReturn:
+        loads.append(encoder.spec.name)
+        raise ConfigurationError(LOADER_FAILURE)
+
+    encoder._load = load  # type: ignore[method-assign]
+    return encoder, loads
 
 
 def unit_references(

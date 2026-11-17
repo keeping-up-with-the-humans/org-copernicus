@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "IDENTITY_KEYS",
     "LOADED_COMMIT_KEY",
+    "TORCH_VERSION_KEY",
+    "TRANSFORMERS_VERSION_KEY",
     "UNKNOWN_REVISION",
     "VERSION_KEYS",
     "as_unicode_1d",
@@ -47,12 +49,18 @@ IDENTITY_KEYS = (
 # names none.
 LOADED_COMMIT_KEY = "resolved_revision"
 UNKNOWN_REVISION = "unknown"
-# Recorded with every set. The loaded commit is compared when both descriptions record one
-# other than "unknown" (see check_same_encoder); the library versions are never compared. A
-# model repository gets a new commit even when only its documentation changes, so sets embedded
-# from its default branch before and after such a commit must be re-embedded, or embedded with
-# one pinned revision, to be scored together.
-VERSION_KEYS = (LOADED_COMMIT_KEY, "torch_version", "transformers_version")
+TORCH_VERSION_KEY = "torch_version"
+TRANSFORMERS_VERSION_KEY = "transformers_version"
+# Recorded with every set that an encoder made. The loaded commit is compared when both descriptions
+# record one other than "unknown" (see check_same_encoder). The versions of torch and transformers
+# are compared when texts are scored against references (see copernicus._load_check.compare_loads):
+# transformers versions of two major versions or two epochs, and a recorded version that cannot be
+# read, are refused; another release of the same major version, another torch version, or a side
+# that records no version is scored with a warning that the provenance of the scoring records. A
+# model repository gets a new commit even when only its documentation changes, so sets embedded from
+# its default branch before and after such a commit must be re-embedded, or embedded with one pinned
+# revision, to be scored together.
+VERSION_KEYS = (LOADED_COMMIT_KEY, TORCH_VERSION_KEY, TRANSFORMERS_VERSION_KEY)
 PARTIAL_SUFFIX = ".partial"
 
 
@@ -190,10 +198,12 @@ def check_same_encoder(
     The identity keys are compared, and so is the loaded commit, ``resolved_revision``,
     when both sidecars record one other than ``"unknown"``. A description that records
     none, such as the identity of an encoder specification before its model is loaded, is
-    compared on the identity keys alone. The library versions may differ. A model
-    repository gets a new commit even when only its documentation changes, so sets
-    embedded from its default branch before and after such a commit are refused together;
-    re-embed one of them, or embed both with the same pinned revision.
+    compared on the identity keys alone. The versions of torch and transformers are not
+    compared here: `copernicus._load_check.compare_loads` compares them for texts and
+    references, after this check. A model repository gets a new commit even when only its
+    documentation changes, so sets embedded from its default branch before and after such a
+    commit are refused together; re-embed one of them, or embed both with the same pinned
+    revision.
 
     Args:
         first: The first description.
@@ -203,8 +213,8 @@ def check_same_encoder(
 
     Raises:
         ConfigurationError: If a description lacks an identity key; naming every identity
-            key whose values differ, with both values; or naming both loaded commits when
-            they differ.
+            key whose values differ, with both values, and saying to embed both sides with
+            one encoder specification; or naming both loaded commits when they differ.
     """
     one = encoder_identity(first, first_owner)
     two = encoder_identity(second, second_owner)
@@ -214,7 +224,7 @@ def check_same_encoder(
     if differing:
         raise ConfigurationError(
             f"the {first_owner} and the {second_owner} were embedded with different encoder "
-            f"settings: " + ", ".join(differing)
+            f"settings: {', '.join(differing)}; embed both sides with one encoder specification"
         )
     commits = (_loaded_commit(first), _loaded_commit(second))
     if None not in commits and commits[0] != commits[1]:

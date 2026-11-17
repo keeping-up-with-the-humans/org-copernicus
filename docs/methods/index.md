@@ -1,6 +1,6 @@
 # Methods
 
-The methods pages describe each method of the library as the library implements it: what the method is, the algorithm with its constants, what it assumes and which errors it corrects, its parameters, a small example on the toy corpus, and the literature it rests on. The methods follow the accompanying methods paper (under review). Where the library departs from the paper's analysis code, the page says what the library does and what the analysis code did.
+The methods pages describe each method of the library as the library implements it: what the method is, the algorithm with its constants, what it assumes and which errors it corrects, its parameters, a small example on the toy corpus, and the literature it rests on. The methods follow the accompanying methods paper (under review). Each methods page lists the known departures from the paper's analysis code in its section "Where the library departs from the paper's analysis code": what the library does, what the analysis code did, and the consequence where it is known.
 
 The examples run on a laptop CPU, with the fake backend for the LLM coders and the small encoder MiniLM for the embeddings, like the [tutorials](../getting-started.md). The fake backend answers from a table of cue words, so its scores show how a method works, not how well a real model codes your texts.
 
@@ -12,7 +12,7 @@ The examples run on a laptop CPU, with the fake backend for the LLM coders and t
 | [One-stage LLM coder](one-stage-llm-coder.md) | Scores each attribute in one model call, without passages |
 | [Similarity coder](similarity-coder.md) | Scores a text by the cosine of its embedding to reference texts of the two poles |
 | [Hybrid coder](hybrid-coder.md) | Rebuilds each text from the verified passages of a two-stage run and scores it by similarity |
-| [NLP-ML baseline](nlp-ml-baseline.md) | Predicts the human values of the human-coded texts from embeddings with a ridge regression, out of fold, as the benchmark the coders are read against; it scores no other text, and [embedding-augmented calibration](corrections/embedding-augmented-calibration.md) scores a corpus from the same kind of fit |
+| [NLP-ML baseline](nlp-ml-baseline.md) | Predicts the human values of the human-coded texts from embeddings with a ridge regression, out of fold, as the benchmark the coders are read against; in the library it scores no other text, and [embedding-augmented calibration](corrections/embedding-augmented-calibration.md) scores a corpus from the same kind of fit, as the paper did with the baseline before correcting the estimates built on it |
 
 [The validity panel](validity-panel.md) checks any of these scores against human values: rank validity, the four score errors, a reliability ceiling, and intervals from a bootstrap of whole groups.
 
@@ -20,8 +20,8 @@ The examples run on a laptop CPU, with the fake backend for the LLM coders and t
 
 A machine score can be wrong in four ways. The validity panel measures each on a 0 to 1 scale on which the score and the human values are each scaled by their own observed range; [its page](validity-panel.md) says what that scale shows and what it hides.
 
-- **Level displacement**: the scores are too high or too low throughout.
-- **Calibration shortfall**: the scores are squeezed toward the middle (or spread too far), so they move less (or more) than the human value.
+- **Level displacement**: within their own range the scores sit too high or too low throughout, compared with the human values within theirs.
+- **Calibration shortfall**: within their own range the scores are squeezed toward the middle (or spread too far), so they move less (or more) than the human value.
 - **Covariate-linked error**: the error changes with text length or another observed variable.
 - **Noise**: the same text gets a different score on another run.
 
@@ -56,4 +56,4 @@ A correction at the **score** level gives every text a new value: most score-lev
 
 ## Literature
 
-Every page lists the works it rests on. [References](references.md) gives the full entries, copied from the reference list of the accompanying methods paper (under review).
+Every page lists the works it rests on. [References](references.md) gives the full entries.

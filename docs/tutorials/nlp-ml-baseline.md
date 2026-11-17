@@ -8,7 +8,7 @@ The NLP-ML baseline answers a plain question: how well does a simple supervised 
 - **No GPU and no API key.** MiniLM runs on the CPU; the baseline itself is a ridge regression.
 - Embedded texts, and a numeric gold value for every text you analyse. The baseline does not drop texts with a missing gold value; it needs all of them.
 
-To code with a real model instead of the fake backend, replace the backend line of the code below. This is a snippet to read, not to run:
+To code with a real model instead of the fake backend, replace the backend line of the code below. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. This is a snippet to read, not to run:
 
 ```python
 backend = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY
@@ -149,7 +149,7 @@ copernicus baseline ridge --embeddings minilm=texts_minilm --texts toy_corpus.cs
     --floor-units 4 --k-folds 3 --out baseline.csv
 ```
 
-The command writes `baseline.csv` and, beside it, `baseline_oof.csv`, `baseline_skipped.csv` and `baseline_curves.csv`, with a description in `baseline.csv.json`. In `--embeddings NAME=STEM`, `NAME` must be the encoder recorded in the set. Add `--coder-scores` for the plus-score variant.
+The command writes `baseline.csv` and, beside it, `baseline_oof.csv`, `baseline_skipped.csv` and `baseline_curves.csv`, with a description in `baseline.csv.json`. In `--embeddings NAME=STEM`, `NAME` must be the encoder recorded in the set. Add `--coder-scores text_scores.csv --coder-score-column construct_score` for the plus-score variant: `text_scores.csv` is the file that `copernicus store export run.sqlite --what text --out text_scores.csv` writes, and `--coder-score-column` names its score column (`score` by default).
 
 ## What the output means
 

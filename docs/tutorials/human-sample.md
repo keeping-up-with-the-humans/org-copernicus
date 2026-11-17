@@ -9,7 +9,7 @@ The corrections of this library need a sample of texts that a human has coded. T
 - Machine scores for all texts, from any coder. The tutorial uses the fake backend.
 - In a real study, a human coder. In the tutorial the gold columns of the toy corpus stand in for the human values.
 
-To code with a real model instead of the fake backend, replace the backend line of the code below. This is a snippet to read, not to run:
+To code with a real model instead of the fake backend, replace the backend line of the code below. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. This is a snippet to read, not to run:
 
 ```python
 backend = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY
@@ -215,6 +215,7 @@ The draw file is what binds the coded sample to the texts file. With `--draw`, `
 - **Do not draw by texts when the texts of a person correlate.** Draw by groups, and name the person or document as the group.
 - **Do not swap or redraw texts after the draw.** A redraw changes the inclusion probabilities, so a text that a coder cannot code stays in the draw and is recorded as uncodable, with the reason, not replaced by another draw. `attach_draw` refuses a drawn text without a value, so give it the value that your coding rules set for a text that shows nothing of the construct (the two-stage coder's rule is the lowest level), and report how many drawn texts were uncodable.
 - **A small number of groups limits the estimate.** The standard errors are clustered by group. With few labelled groups, the estimates are noisy and some estimators refuse to run.
+- **A few large groups can dominate.** When a few groups hold a large share of the texts, a draw of whole groups misses them in many draws, and the number of texts drawn varies with the groups drawn. The prediction-powered mean and difference then carry a ratio bias, and their intervals can cover far less often than 95 percent. Check such a design with `repeated_study` and read its coverage, as [Correcting estimates](correcting-estimates.md#pitfalls) explains.
 
 ## Next
 

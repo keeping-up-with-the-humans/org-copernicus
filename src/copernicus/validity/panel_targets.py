@@ -22,6 +22,8 @@ from copernicus.validity.anatomy import (
 )
 from copernicus.validity.bootstrap import BootstrapCI, VectorMetric, bootstrap_many
 from copernicus.validity.metrics import Association, association, is_constant
+from copernicus.validity.panel_checks import check_infinite_scores, check_run_numbers, used_texts
+from copernicus.validity.panel_units import rows_per_group, rows_per_text
 from copernicus.validity.reliability import share_of_ceiling
 
 if TYPE_CHECKING:
@@ -34,7 +36,9 @@ __all__ = ["PANEL_COLUMNS", "TargetResult", "compute_target"]
 PANEL_COLUMNS = (
     "target",
     "gold_column",
+    "unit",
     "n_used",
+    "n_texts",
     "n_dropped_missing",
     "n_runs",
     "status",
@@ -81,10 +85,17 @@ ERROR_FIELDS = ("mae_01", "level_displacement", "calibration_shortfall", "covari
 class TargetResult:
     """One panel row with the texts that entered it and the texts dropped from it.
 
+    Under either unit the two sets hold text ids; with ``unit="group"`` only a missing gold
+    value drops a text, because the unit refuses a text whose run-averaged score is not finite
+    (no run with a score, or finite run scores whose average overflows) or whose covariate is
+    missing or not finite. Under either unit a scored text with a finite gold value and an
+    infinite score is refused before the runs are averaged, not dropped.
+
     Attributes:
         row: Column name to value, in the panel's column order.
         used: Text ids with a score, a gold value and a covariate value.
-        dropped: Scored text ids lacking a score (in every run), a gold value or a covariate.
+        dropped: Scored text ids whose run-averaged score, gold value or covariate is missing or
+            not finite (under ``unit="group"`` the gold value only).
     """
 
     row: dict[str, Any]
@@ -130,6 +141,7 @@ def _empty_row(key: str, gold_column: str, settings: PanelSettings) -> dict[str,
     row.update(
         target=key,
         gold_column=gold_column,
+        unit=settings.unit,
         covariate_scale=settings.covariate_scale,
     )
     return row
@@ -186,31 +198,58 @@ def compute_target(
     groups: pd.Series,
     ceiling: float,
     settings: PanelSettings,
+    *,
+    infinite: frozenset[str] = frozenset(),
+    named_groups: pd.Series | None = None,
 ) -> TargetResult:
     """Compute one target's row.
 
-    The score is averaged over runs per text. A scored text whose averaged score, gold
-    value or covariate is missing (or whose id has no gold row) is dropped and counted,
-    never imputed. The noise uses the (text, run) rows of the texts that entered only: their
-    run scores are min-max scaled to 0-1 over all those rows before the per-text standard
-    deviation is taken, so it is on the scale of the other errors. When the association is
-    not ``ok`` (too few pairs or a constant score or gold) the association fields, the
-    errors, the intervals and ``n_boot`` stay missing (no bootstrap runs), except that a
-    constant score keeps its calibration shortfall (-1) and its covariate-linked error (see
-    ``constant_score_errors``) unless the gold is constant too.
-    When the covariate-linked error is undefined (a constant covariate) its interval is NaN
-    and the other intervals are still computed.
+    First, before the runs are averaged per text, a scored text with a finite gold value (a used
+    text) whose score rows hold an infinite value, in ``runs`` or among the texts of
+    ``infinite``, stops the panel under either unit, and under ``unit="text"`` so does such a
+    text with a score row without a run number (see `panel_checks`); the construct of a long
+    attribute table was averaged before, from its finite attribute scores, and ``infinite``
+    holds its texts with an infinite attribute score. Then the score is averaged over runs
+    per text, a run without a score left out (an infinite score left in ``runs`` belongs to a
+    text without gold, which is dropped, and is left out of its average). Under
+    ``unit="text"`` every text is a row: a scored text whose run-averaged score is missing or
+    not finite, or whose gold value or covariate is missing or not finite (or whose id has no
+    gold row), is dropped and counted, never imputed, and the groups are the clusters of the
+    bootstrap.
+    Under ``unit="group"`` a scored text without a gold value is dropped and counted the same
+    way, and the rows are the groups (see `rows_per_group`): a group's score is the mean over
+    its texts that were scored for the target, its covariate the mean of theirs, against the
+    one gold value that all the group's texts carry, scored or not, and each group is its own
+    cluster; a scored text with a finite gold value whose run-averaged score is not finite (no
+    run with a score, or finite run scores whose average overflows) or whose covariate is
+    missing or not finite, a score row of such a text without a run number, or two gold values
+    in one of these groups raise instead (an infinite score was refused first, as said above).
+    The direction, the association, the errors and the intervals are computed on the rows. The noise
+    uses the (text, run) rows of the texts that entered only, or under ``unit="group"`` each group's
+    mean score in the runs that all its used texts have a score for (see `group_runs`): the run
+    scores are min-max scaled to 0-1 over all those rows before the standard deviation of each row
+    is taken, so it is on the scale of the other errors. When the association is not ``ok`` (too few
+    pairs or a constant score or gold) the association fields, the errors, the intervals and
+    ``n_boot`` stay missing (no bootstrap runs), except that a constant score keeps its calibration
+    shortfall (-1) and its covariate-linked error (see ``constant_score_errors``) unless the gold is
+    constant too. When the covariate-linked error is undefined (a constant covariate) its interval
+    is NaN and the other intervals are still computed.
 
     Args:
         key: Target name for the output.
         gold_column: Name of the gold column, recorded in the row.
         runs: Frame with ``text_id`` (string), ``run_number`` and ``score``.
-        gold: Gold values indexed by string text id.
+        gold: Gold values indexed by string text id, of every text of the gold frame.
         covariate: Covariate values indexed by string text id.
         covariate_name: Name recorded in the ``covariate`` column.
-        groups: Cluster of each text, indexed by string text id.
+        groups: Group of each text, indexed by string text id: the cluster of the bootstrap,
+            and under ``unit="group"`` the unit of the comparison.
         ceiling: Reliability ceiling of this row; NaN when none applies.
         settings: Panel settings.
+        infinite: Ids of the texts whose input rows hold an infinite score that ``runs`` may
+            no longer show (the construct averages the finite attribute scores only).
+        named_groups: The groups to name beside a refused text, where the table gives them;
+            ``None`` names the text only.
 
     Returns:
         The row and the sets of used and dropped text ids.
@@ -218,10 +257,22 @@ def compute_target(
     Raises:
         EstimatorError: If a bootstrap metric is undefined on too many replicates; the
             message starts with the target name.
-        ConfigurationError: If the bootstrap cannot run (for example fewer than two
-            clusters among the used texts); the message starts with the target name.
+        ConfigurationError: If the bootstrap cannot run (for example fewer than two clusters among
+            the used texts), a scored text with a finite gold value has an infinite score or a score
+            row without a run number, or under ``unit="group"`` the texts of a group that holds a
+            used text carry more than one gold value, or there is a scored text with a gold value
+            whose run-averaged score is not finite (no run with a score, or finite run scores whose
+            average overflows) or whose covariate is missing or not finite; the message starts with
+            the target name.
     """
-    per_text = runs.groupby("text_id")["score"].mean()
+    prefix = f"target {key!r}: "
+    used = used_texts(runs, gold)
+    check_infinite_scores(prefix, runs, infinite, used, named_groups)
+    if settings.unit != "group":
+        check_run_numbers(prefix, runs, used, named_groups)
+    values = runs["score"].to_numpy(dtype="float64", na_value=np.nan)
+    finite = runs.assign(score=np.where(np.isinf(values), np.nan, values))
+    per_text = finite.groupby("text_id")["score"].mean()
     ids = per_text.index
     aligned = pd.DataFrame(
         {
@@ -231,32 +282,33 @@ def compute_target(
         },
         index=ids,
     )
-    complete = np.isfinite(aligned.to_numpy(dtype=float)).all(axis=1)
-    used = aligned[complete]
-    score = used["score"].to_numpy()
-    gold_values = used["gold"].to_numpy()
-    covariate_values = used["covariate"].to_numpy()
+    if settings.unit == "group":
+        units = rows_per_group(key, gold_column, runs, aligned, groups, gold)
+    else:
+        units = rows_per_text(runs, aligned, groups)
+    score = units.score
+    gold_values = units.gold
+    covariate_values = units.covariate
     direction = _applied_direction(settings.direction, score, gold_values)
     if direction == "negative":
         score = -score
     found = association(score, gold_values)
     row = _empty_row(key, gold_column, settings)
     row.update(
-        n_used=int(used.shape[0]),
-        n_dropped_missing=int((~complete).sum()),
+        n_used=int(score.size),
+        n_texts=len(units.used),
+        n_dropped_missing=len(units.dropped),
         n_runs=int(runs["run_number"].nunique()),
         status=found.status,
         direction_applied=direction,
         covariate=covariate_name,
-        noise=replicate_noise(runs[runs["text_id"].isin(used.index)], scale="observed"),
+        noise=replicate_noise(units.noise_runs, scale="observed"),
         ceiling=ceiling,
         n=found.n,
     )
     if found.status == "ok":
         row.update(
-            _estimates(
-                key, found, score, gold_values, covariate_values, used.index, groups, settings
-            )
+            _estimates(key, found, score, gold_values, covariate_values, units.clusters, settings)
         )
     elif found.status == "constant_score" and not is_constant(gold_values):
         kept = {
@@ -271,7 +323,7 @@ def compute_target(
     row["share_of_ceiling"] = (
         share_of_ceiling(row["rank_validity"], ceiling) if np.isfinite(ceiling) else NAN
     )
-    return TargetResult(row=row, used=frozenset(used.index), dropped=frozenset(ids[~complete]))
+    return TargetResult(row=row, used=frozenset(units.used), dropped=frozenset(units.dropped))
 
 
 def _both_scales(raw: ScoreErrors, standardized: ScoreErrors) -> dict[str, float]:
@@ -288,8 +340,7 @@ def _estimates(
     score: np.ndarray,
     gold: np.ndarray,
     covariate: np.ndarray,
-    used_ids: pd.Index,
-    groups: pd.Series,
+    clusters: np.ndarray,
     settings: PanelSettings,
 ) -> dict[str, Any]:
     """Point estimates and intervals of a target whose association is defined."""
@@ -306,7 +357,6 @@ def _estimates(
         "calibration_shortfall": errors.calibration_shortfall,
         "covariate_linked_error": errors.covariate_linked_error,
     }
-    clusters = groups.reindex(used_ids).to_numpy()
     intervals = _intervals(key, point, score, gold, covariate, clusters, settings)
     estimates: dict[str, Any] = {
         "spearman": found.spearman,

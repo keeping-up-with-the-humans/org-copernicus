@@ -10,6 +10,7 @@ from copernicus.llm import (
     BackendInfo,
     FakeBackend,
     GenerationRequest,
+    ModelCapabilities,
     ScriptedResponder,
     capabilities_for_model,
 )
@@ -36,6 +37,16 @@ def test_capabilities_defaults_for_other_models() -> None:
     assert caps.supports_temperature and caps.supports_top_p and caps.supports_seed
     assert caps.max_tokens_parameter == "max_tokens"
     assert caps.reasoning_effort is None
+
+
+@pytest.mark.parametrize("model", ["maker/gpt-5-mini", "maker/o3", "a/b/o4-mini", "Maker/GPT-5"])
+def test_a_reasoning_model_is_recognised_behind_a_makers_prefix(model: str) -> None:
+    assert capabilities_for_model(model) == capabilities_for_model("gpt-5-mini")
+
+
+@pytest.mark.parametrize("model", ["maker/gpt-4.1-mini", "maker/go1-model", "o3-maker/llama"])
+def test_only_the_part_after_the_last_slash_is_matched(model: str) -> None:
+    assert capabilities_for_model(model) == ModelCapabilities()
 
 
 def test_scripted_fake_records_calls_and_exhausts() -> None:

@@ -135,11 +135,15 @@ def test_every_pytest_ini_option_is_one_that_pytest_itself_defines() -> None:
 
 
 def test_the_openai_floor_matches_the_sdk_that_the_stubs_construct_errors_for() -> None:
+    """The stubs take their request and response classes from the SDK and import no HTTP package.
+
+    They build the errors with the classes of the HTTP package that the installed SDK uses.
+    """
     match = re.search(r'"openai>=(\d+)', pyproject_text())
     assert match is not None and int(match.group(1)) >= 3
     stubs = (TESTS / "llm" / "openai_support.py").read_text(encoding="utf-8")
-    assert "import httpx2" in stubs
-    assert not re.search(r"^import httpx$", stubs, re.MULTILINE)
+    assert "get_type_hints(constructor)" in stubs
+    assert not re.search(r"^(import|from) httpx", stubs, re.MULTILINE)
 
 
 def test_the_docs_extra_names_the_floors_that_work_together_on_python_3_11_and_later() -> None:

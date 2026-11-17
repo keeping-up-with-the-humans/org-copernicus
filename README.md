@@ -1,6 +1,6 @@
 # copernicus
 
-copernicus codes constructs from text against a rubric. A rubric names a construct, splits it into attributes, and gives each attribute markers that a reader can look for in a text. The library scores texts against such a rubric with LLM coders, with similarity coders on embeddings, and with hybrid coders that combine the two. It then checks the scores against human gold values with a validity panel, compares them with an NLP-ML baseline, and corrects the bias that remains when the scores are used in a regression or a mean. It reproduces the configurations of the accompanying methods paper (under review) and ships the prompts of that paper.
+copernicus codes constructs from text against a rubric. A rubric names a construct, splits it into attributes, and gives each attribute markers that a reader can look for in a text. The library scores texts against such a rubric with LLM coders, with similarity coders on embeddings, and with hybrid coders that combine the two. It then checks the scores against human gold values with a validity panel, compares them with an NLP-ML baseline, and corrects the bias that remains when the scores are used in a regression or a mean. It offers the configurations of the accompanying methods paper (under review), with the departures from the paper's analysis code that the methods pages list, and ships the prompts of that paper.
 
 ## What the library does
 
@@ -10,7 +10,7 @@ copernicus codes constructs from text against a rubric. A rubric names a constru
 
 ## Installation
 
-Install the package from its root folder, the one that holds `pyproject.toml`. The name on the package index is `org-copernicus`; the import name and the command are `copernicus`. `pip install org-copernicus` installs it once the first release is published; until then it is installed from its root folder or from a wheel built there:
+Install the package from its root folder, the one that holds `pyproject.toml`. The name on the package index is `org-copernicus`; the import name and the command are `copernicus`. `pip install org-copernicus` installs the package once a release has been uploaded to the package index; none has been uploaded so far; until then it is installed from its root folder or from a wheel built there:
 
 ```
 pip install .
@@ -88,7 +88,7 @@ The documentation site is built from the `docs/` folder with MkDocs. Install the
 
 Please cite the accompanying methods paper (under review) and the software:
 
-> Author names withheld. copernicus: rubric-based construct coding with LLM methods. Version 0.1.0. Software accompanying a methods paper under review.
+> Author names withheld. copernicus: rubric-based construct coding with LLM methods. Version 0.2.0. Software accompanying a methods paper under review.
 
 `CITATION.cff` holds the same entry in a form that reference managers read.
 

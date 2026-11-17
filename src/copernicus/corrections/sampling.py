@@ -162,6 +162,12 @@ def draw_human_sample(
     as a warning, because the battery refuses such sizes and the correction has little left
     to work on.
 
+    With groups of unequal size the number of texts drawn varies with the groups drawn, and a
+    draw of a few groups can miss a group that holds a large share of the texts. The
+    prediction-powered mean and difference are then ratio estimators with a bias (see
+    ``mean_ppi``), and their intervals can cover far less often than 95 percent; check such a
+    design with ``repeated_study``.
+
     Args:
         table: The text table; its ``group_id`` column defines the groups. A table built
             without a group column makes every text its own group, so the draw takes texts

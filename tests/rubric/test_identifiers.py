@@ -17,7 +17,7 @@ import copernicus.hybrid.coder as hybrid_coder
 import copernicus.references.cells as cells
 import copernicus.rubric.identifiers as identifiers
 import copernicus.similarity.scorer as scorer
-import copernicus.validity.panel_inputs as panel_inputs
+import copernicus.validity.panel_scores as panel_scores
 from copernicus.coders.store_schema import FIXED_RESULT_COLUMNS, validate_identifiers
 from copernicus.errors import RubricValidationError, StoreError
 from copernicus.rubric import load_rubric, rubric_from_dict, toy_rubric_path, validate_rubric_dict
@@ -49,7 +49,7 @@ BAD_IDS = [
 TARGET_NAME_USERS: dict[ModuleType, tuple[str, ...]] = {
     cells: ("TARGET_CONSTRUCT",),
     scorer: ("ROLLUP_SUFFIX", "TARGET_CONSTRUCT"),
-    panel_inputs: ("ROLLUP_SUFFIX", "TARGET_CONSTRUCT"),
+    panel_scores: ("ROLLUP_SUFFIX", "TARGET_CONSTRUCT"),
     hybrid_coder: ("ROLLUP_SUFFIX",),
     estimates_ols: ("TARGET_CONSTRUCT",),
 }
@@ -175,7 +175,7 @@ def test_the_generated_target_names_have_one_source() -> None:
     assert cells.TARGET_CONSTRUCT is identifiers.TARGET_CONSTRUCT
     assert scorer.TARGET_CONSTRUCT is identifiers.TARGET_CONSTRUCT
     assert scorer.ROLLUP_SUFFIX is identifiers.ROLLUP_SUFFIX
-    assert panel_inputs.ROLLUP_SUFFIX is identifiers.ROLLUP_SUFFIX
+    assert panel_scores.ROLLUP_SUFFIX is identifiers.ROLLUP_SUFFIX
 
 
 def module_assignments(tree: ast.Module) -> tuple[set[str], set[object]]:

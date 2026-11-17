@@ -1,22 +1,26 @@
-"""Tests of the evidence texts: which verified passages are joined, and when raw text stands in."""
+"""The evidence texts: which verified passages are joined, and when a text's own text stands in."""
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 import pytest
-from hybrid_support import evidence_frame
+from hybrid_support import STUB_DIMENSION, StubEncoder, evidence_frame, unit_references
 
 import copernicus.hybrid.texts as texts_module
 from copernicus.assets import load_toy_cues
 from copernicus.coders import CodingSettings, code_texts, export_evidence, export_scores, normalize
 from copernicus.data import TextTable
 from copernicus.errors import ConfigurationError, EvidenceContractError, SettingsError
-from copernicus.hybrid import HybridTexts, evidence_texts
+from copernicus.hybrid import HybridTexts, evidence_texts, score_hybrid
 from copernicus.llm import FakeBackend, cue_responder
+from copernicus.llm.base import GenerationRequest
+from copernicus.llm.fake import TEMPLATE_MARKER_PATTERN
 from copernicus.rubric.model import Rubric
+from copernicus.similarity import SimilaritySettings
 
 FALLBACKS = {"", "short", "no_evidence"}
 SUMMARY_KEYS = {
@@ -97,7 +101,6 @@ def test_texts_below_min_words_stay_raw_and_are_marked_short(
     everything = evidence_texts(coded_store, rubric, table, granularity="construct", min_words=1000)
     assert everything.fallback == ["short"] * len(table)
     assert everything.texts == [table.text_of(text_id) for text_id in table.ids()]
-    assert everything.texts == [" ".join(text.split()) for text in everything.texts]
     assert everything.summary["n_short"] == len(table) and everything.summary["n_evidence"] == 0
     assert everything.summary["mean_words_evidence"] == 0.0
     default = evidence_texts(coded_store, rubric, table, granularity="construct")
@@ -119,6 +122,53 @@ def test_a_ten_word_text_is_short_and_keeps_its_raw_text(
     assert result.fallback[0] == "short" and result.texts[0] == ten_words
     longer = evidence_texts(store, rubric, short, granularity="construct", min_words=10)
     assert longer.fallback[0] == "no_evidence" and longer.texts[0] == ten_words
+
+
+def no_passage(request: GenerationRequest) -> str:
+    """Answer an extraction with no passage for any marker of the output template."""
+    names = TEMPLATE_MARKER_PATTERN.findall(request.system)
+    return json.dumps({name: {"evaluable": False, "quotes": []} for name in names})
+
+
+# Ten words, with a line break, a run of spaces, a tab, a no-break space and padding.
+FALLBACK_TEXT = "  A first line.\nA second  line,\twith a no-break space.  "
+
+
+def store_without_passages(rubric: Rubric, folder: Path) -> tuple[Path, TextTable]:
+    """Code `FALLBACK_TEXT` with an extraction that finds no passage; return store and table."""
+    frame = pd.DataFrame({"text_id": ["a"], "text": [FALLBACK_TEXT], "group_id": ["g"]})
+    table = TextTable.from_frame(frame)
+    store = folder / "no_passages.sqlite"
+    code_texts(table, rubric, FakeBackend(no_passage), store, CodingSettings(runs=1))
+    return store, table
+
+
+@pytest.mark.parametrize("granularity", ["construct", "attribute"])
+@pytest.mark.parametrize(("min_words", "reason"), [(40, "short"), (1, "no_evidence")])
+def test_a_text_that_falls_back_keeps_its_text_as_the_table_holds_it(
+    rubric: Rubric, tmp_path: Path, granularity: str, min_words: int, reason: str
+) -> None:
+    store, table = store_without_passages(rubric, tmp_path)
+    result = evidence_texts(store, rubric, table, granularity=granularity, min_words=min_words)  # type: ignore[call-overload]
+    cells = [result] if isinstance(result, HybridTexts) else list(result.values())
+    assert len(cells) == (1 if granularity == "construct" else len(rubric.attributes))
+    kept = FALLBACK_TEXT.strip()
+    assert [(cell.texts, cell.fallback) for cell in cells] == [([kept], [reason])] * len(cells)
+
+
+def test_the_hybrid_coder_embeds_a_short_text_as_the_table_holds_it_for_each_attribute(
+    rubric: Rubric, tmp_path: Path
+) -> None:
+    store, table = store_without_passages(rubric, tmp_path)
+    encoder = StubEncoder()
+    refs = unit_references(rubric, "stub", STUB_DIMENSION)
+    # One text: the mean reduction, since the principal component needs two texts.
+    mean = SimilaritySettings(reduction="mean")
+    result = score_hybrid(
+        store, table, rubric, encoder, refs, mean, granularity="attribute", min_words=40
+    )
+    assert encoder.calls == [[FALLBACK_TEXT.strip()]]
+    assert set(result.frame["fallback"]) == {"short"}
 
 
 def test_a_text_that_changed_since_the_coding_is_refused(

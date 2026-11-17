@@ -97,7 +97,12 @@ def _command(method: Literal["two_stage", "one_stage"]) -> Callable[..., None]:
             BackendKind, typer.Option("--backend", help="Where the model runs.")
         ] = BackendKind.OPENAI,
         model: Annotated[
-            str | None, typer.Option("--model", help="Model name (openai and vllm).")
+            str | None,
+            typer.Option(
+                "--model",
+                help="Model name (openai and vllm); for openai, a name with a maker in front "
+                "(maker/gpt-5-mini) is recognised by the part after the last slash.",
+            ),
         ] = None,
         base_url: Annotated[
             str | None, typer.Option("--base-url", help="OpenAI-compatible endpoint (openai).")

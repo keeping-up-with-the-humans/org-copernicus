@@ -4,8 +4,10 @@ The features of a text are all its score columns, the covariate and the spread o
 scores: the row-wise population standard deviation of the score columns standardised on the
 training rows (the standardisation the design applies to them), so that the units of a column
 do not change the predictions; the research took the spread of the raw score columns. Each
-feature is standardised on the training rows with the population standard deviation; a
-constant feature keeps standard deviation 1, so it standardises to zeros and gets no weight.
+feature is centred at its computed mean on the training rows and divided by its population
+standard deviation there. A feature whose range is at most ``1e-12`` times the larger of 1
+and its largest absolute value is divided by 1. A constant feature then has no variation on
+the training rows, though rounding can leave it at a constant value other than zero.
 A penalised linear regression
 maps the features to the gold value. The penalty type is the variant, and its strength is
 chosen on the training rows alone by validation that never splits a group:
@@ -34,7 +36,6 @@ before as ``n_alphas`` (the same path of penalties either way).
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -43,6 +44,7 @@ from typing import ClassVar, Literal
 import numpy as np
 import pandas as pd
 
+from copernicus._versions import read_version
 from copernicus.baseline.folds import rng_for
 from copernicus.baseline.ridge import ALPHAS, RidgeDesign
 from copernicus.corrections.crossfit import inner_k, inner_splits
@@ -107,17 +109,21 @@ def stacking_features(
 
 
 def _alpha_count_keyword() -> str:
-    """The keyword under which the installed scikit-learn takes the number of penalties."""
+    """The keyword under which the installed scikit-learn takes the number of penalties.
+
+    Raises:
+        ConfigurationError: If the version of the installed scikit-learn cannot be read whole
+            by the package parser (`copernicus._versions.read_version`).
+    """
     import sklearn
 
-    match = re.match(r"(\d+)\.(\d+)", sklearn.__version__)
-    if match is None:
+    version = read_version(sklearn.__version__)
+    if version is None:
         raise ConfigurationError(
             f"cannot read the scikit-learn version {sklearn.__version__!r}; the keyword for the "
             "number of penalties of the lasso and elastic net path depends on it"
         )
-    version = (int(match.group(1)), int(match.group(2)))
-    return "alphas" if version >= INTEGER_ALPHAS_FROM else "n_alphas"
+    return "alphas" if version.release[:2] >= INTEGER_ALPHAS_FROM else "n_alphas"
 
 
 @dataclass(frozen=True, eq=False)
@@ -288,7 +294,9 @@ class SupervisedStacking:
         Raises:
             NotApplicableError: If the data have fewer than two score columns (with the
                 reason ``applies`` gives) or the training rows hold fewer than two groups.
-            ConfigurationError: If an id is unknown, repeated or has no gold value.
+            ConfigurationError: If an id is unknown, repeated or has no gold value, or, for
+                the lasso and the elastic net, the version of the installed scikit-learn
+                cannot be read.
             EstimatorError: If the gold values of the training rows are constant, or every
                 feature is constant on them.
         """

@@ -16,8 +16,10 @@ is named in the provenance and ``n_folds_used`` counts the folds of the rank val
 Per seed and integer size, when every text carries a gold value, one diagnostic row scores the
 pseudo-values of a whole-data draw with the identity rectifier (the first score column)
 against the gold values of every text, beside the rank validity of that score column
-(``diagnostic = True``, scheme ``whole_data``). Estimate-level corrections are not part of the
-battery.
+(``diagnostic = True``, scheme ``whole_data``). Its provenance holds the draw and the means of
+the pseudo-values, with ``lambda_star`` and the tuned mean beside the sentences that say why
+either is missing (``lambda_star_reason``, ``mean_rectified_tuned_reason``, null when defined).
+Estimate-level corrections are not part of the battery.
 """
 
 from __future__ import annotations
@@ -102,10 +104,15 @@ class BatteryResult:
     is a mean of per-fold values weighted by the fold's scored texts, where the paper pooled the
     scaled held-out texts of all folds for its error metrics (so the covariate-linked error here
     is a mean of fold slopes, not one pooled slope); the native MAE is the mean absolute error
-    per text, where the paper reported the level error ``|mean prediction - mean gold|``; no
-    fold is dropped for holding too few units; and the ensemble pools the entries fitted in each
-    fold, so its members can change from fold to fold, where the paper admitted only variants
-    fitted on every fold.
+    per text, where the paper reported the level error ``|mean prediction - mean gold|``. The
+    paper's battery gave each family a minimum number of human-coded texts (for example 100
+    for multiple imputation and 200 for embedding-augmented calibration) and left out a
+    correction's whole evaluation at a seed, scheme and size when the draw of any fold fell
+    below that minimum; this battery applies no such table, while a correction still refuses
+    what its own fit cannot use, such as the misclassification matrix with fewer than 30
+    labelled texts in a category. The ensemble pools the entries fitted in each fold, so its
+    members can change from fold to fold, where the paper admitted only variants fitted on
+    every fold.
 
     Attributes:
         results: One row per entry, seed, scheme and size with at least one scored fold, with
@@ -174,9 +181,11 @@ def _diagnostic(data: CorrectionData, seed: int, size: int) -> dict[str, object]
         "pi": draw.pi,
         "draw_seed": draw_seed,
         "lambda_star": values.lambda_star,
+        "lambda_star_reason": values.lambda_star_reason,
         "mean_plugin": values.mean_plugin,
         "mean_rectified": values.mean_rectified,
         "mean_rectified_tuned": values.mean_rectified_tuned,
+        "mean_rectified_tuned_reason": values.mean_rectified_tuned_reason,
         "status_raw": raw.status,
         "status_corrected": corrected.status,
     }

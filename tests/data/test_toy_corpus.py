@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 import re
 
 import pandas as pd
 from scipy.stats import spearmanr
 
 from copernicus.data import TextTable
+from copernicus.hybrid import evidence_texts
 
 BANDS = {
     "low": (range(1, 7), {1, 2}),
@@ -50,3 +52,9 @@ def test_texts_are_three_to_six_sentences_and_lengths_are_exact(toy_corpus: Text
 def test_length_is_a_weak_proxy_of_the_gold_score(toy_corpus: TextTable) -> None:
     frame: pd.DataFrame = toy_corpus.frame
     assert spearmanr(frame.gold_constructiveness, frame.length_words).correlation < 0.8
+
+
+def test_nineteen_texts_are_short_for_the_hybrid_coders_default(toy_corpus: TextTable) -> None:
+    """The hybrid tutorial says that with the default 19 of the 54 toy texts count as short."""
+    default = inspect.signature(evidence_texts).parameters["min_words"].default
+    assert len(toy_corpus) == 54 and int((toy_corpus.frame.n_words < default).sum()) == 19

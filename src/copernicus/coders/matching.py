@@ -13,12 +13,13 @@ the verification decides which passages the scoring stage sees.
 from __future__ import annotations
 
 import logging
-import re
 import unicodedata
 from dataclasses import dataclass
 
 import rapidfuzz
 from rapidfuzz import fuzz
+
+from copernicus.data.table import collapse_whitespace
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,6 @@ VERIFIED_FUZZY = 2
 """The ``verified`` value of a passage that matches the text approximately, above the threshold."""
 EXACT_SCORE = 100.0
 
-_WHITESPACE = re.compile(r"\s+")
 _PUNCTUATION_MAP = str.maketrans(
     {
         "’": "'",
@@ -68,20 +68,12 @@ def verifier_version() -> str:
     return f"rapidfuzz {rapidfuzz.__version__}"
 
 
-def collapse_whitespace(text: str) -> str:
-    """Collapse every run of whitespace to one space and strip both ends.
-
-    Args:
-        text: Any string.
-
-    Returns:
-        The string with single spaces between words.
-    """
-    return _WHITESPACE.sub(" ", text).strip()
-
-
 def normalize(text: str) -> str:
     """Casefold, unify quotation marks and dashes, and collapse whitespace.
+
+    Whitespace is collapsed by `collapse_whitespace`, the rule of the text table's lengths.
+    Neither the Unicode NFC form nor case folding makes a character whitespace or a
+    whitespace character anything else, so collapsing before folding changes no result.
 
     Args:
         text: Any string.
@@ -90,7 +82,7 @@ def normalize(text: str) -> str:
         The comparison form used for matching and for deduplication.
     """
     unified = unicodedata.normalize("NFC", text).translate(_PUNCTUATION_MAP)
-    return _WHITESPACE.sub(" ", unified).casefold().strip()
+    return collapse_whitespace(unified).casefold()
 
 
 @dataclass(frozen=True)

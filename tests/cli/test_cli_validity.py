@@ -83,6 +83,7 @@ def test_panel_from_a_store_writes_four_rows_and_the_report(
         "seed": 42,
         "direction": "positive",
         "reliability": None,
+        "unit": "text",
     }
     assert description["targets"] == TARGETS
     assert description["inputs"] == {"store": str(toy_store), "texts": str(TOY), "gold": str(TOY)}
@@ -203,6 +204,47 @@ def test_panel_from_a_similarity_style_frame(runner: CliRunner, tmp_path: Path) 
     assert "rank validity" in result.stdout
 
 
+def test_panel_compares_once_per_group_with_unit_group(runner: CliRunner, tmp_path: Path) -> None:
+    writers = ["A", "A", "B", "C", "C", "C", "D", "D", "E"]
+    values = {"A": 10.0, "B": 30.0, "C": 25.0, "D": 20.0, "E": 5.0}
+    ids = [f"t{number}" for number in range(1, 10)]
+    frames = {
+        "texts": pd.DataFrame(
+            {
+                "text_id": ids,
+                "text": [" ".join(["word"] * (2 + index)) for index in range(9)],
+                "group_id": writers,
+            }
+        ),
+        "gold": pd.DataFrame({"text_id": ids, "gold": [values[writer] for writer in writers]}),
+        "scores": pd.DataFrame(
+            {
+                "text_id": ids,
+                "target_id": "construct",
+                "score": [1.0, 3.0, 5.0, 2.0, 2.0, 5.0, 4.0, 5.0, 1.0],
+            }
+        ),
+    }
+    for name, frame in frames.items():
+        frame.to_csv(tmp_path / f"{name}.csv", index=False)
+    out, refused = tmp_path / "panel.csv", tmp_path / "refused.csv"
+    args = [
+        *("validity", "panel", "--scores", str(tmp_path / "scores.csv")),
+        *("--texts", str(tmp_path / "texts.csv"), "--gold", str(tmp_path / "gold.csv")),
+        *("--group-column", "group_id", "--target", "construct=gold", "--n-boot", "30"),
+    ]
+    result = runner.invoke(app, [*args, "--unit", "group", "--out", str(out)])
+    assert result.exit_code == 0, result.stderr
+    row = pd.read_csv(out).iloc[0]
+    assert (row["unit"], row["n_used"], row["n_texts"]) == ("group", 5, 9)
+    assert row["rank_validity"] == pytest.approx(0.9, abs=1e-12)
+    description = json.loads((tmp_path / "panel.csv.json").read_text(encoding="utf-8"))
+    assert description["settings"]["unit"] == "group"
+    unknown = runner.invoke(app, [*args, "--unit", "person", "--out", str(refused)])
+    assert unknown.exit_code == 2 and "--unit" in unknown.stderr
+    assert not refused.exists()
+
+
 def test_panel_defaults_are_the_settings_defaults() -> None:
     settings = PanelSettings()
     defaults = option_defaults("validity", "panel")
@@ -210,6 +252,7 @@ def test_panel_defaults_are_the_settings_defaults() -> None:
     assert defaults["covariate_scale"] == settings.covariate_scale
     assert defaults["direction"] == settings.direction
     assert defaults["covariate"] is None and defaults["reliability"] is None
+    assert defaults["unit"] == settings.unit
 
 
 def test_panel_refuses_store_and_scores_together(

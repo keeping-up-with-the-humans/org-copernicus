@@ -12,8 +12,14 @@ from typing import Any
 
 import numpy as np
 
+from copernicus._digests import TEXT_FORM_AS_GIVEN, TEXT_FORM_KEY, TEXTS_HASH_KEY, texts_hash
 from copernicus._io import LOADED_COMMIT_KEY, UNKNOWN_REVISION
 from copernicus.data.table import TextTable
+from copernicus.embeddings._loading import (
+    check_embedding_request,
+    check_transformers_line,
+    loading,
+)
 from copernicus.embeddings.checkpoint import (
     checkpoint_file,
     fragments_fingerprint,
@@ -30,12 +36,11 @@ logger = logging.getLogger(__name__)
 __all__ = ["CHECKPOINT_EVERY", "Encoder", "EncoderRuntime"]
 
 EXTRA_HINT = (
-    'install the embed extra: pip install "org-copernicus[embed]", '
-    'or pip install ".[embed]" from the package\'s root folder'
+    'install the embed extra: pip install ".[embed]" from the package\'s root folder, '
+    'or pip install "org-copernicus[embed]" once a release has been uploaded to the package index'
 )
 NORM_FLOOR = 1e-12
 CHECKPOINT_EVERY = 2048
-MAX_IDS_IN_MESSAGE = 10
 
 
 @dataclass(frozen=True)
@@ -50,10 +55,12 @@ class EncoderRuntime:
         device: The ``torch.device`` the model and the batches live on.
         versions: ``resolved_revision`` (the commit the weights were loaded from, or
             ``"unknown"`` when the model does not name one), ``torch_version``, and
-            ``transformers_version``; recorded in the sidecar of every embedding set.
-            Texts and references whose sidecars record different commits are not scored
-            together, and a checkpoint is resumed only under the commit it was written
-            with.
+            ``transformers_version``; recorded in the sidecar of every embedding set. Texts and
+            references whose sidecars record different commits, transformers versions of two major
+            versions or two epochs, or a version that cannot be read are not scored together;
+            another difference of the versions, or a sidecar that records none, is scored with a
+            warning that the provenance of the scoring records. A checkpoint is resumed only under
+            the commit it was written with.
     """
 
     torch: Any
@@ -120,20 +127,29 @@ class Encoder:
     def _load(self) -> EncoderRuntime:
         """Import torch and transformers and load the tokenizer and the model once.
 
-        A pinned revision of the specification is passed to both loaders. The commit the
-        weights came from is read from the model's configuration.
+        Before anything is downloaded or loaded, the installed transformers is checked
+        against the ``transformers_below`` of the specification. A pinned revision of the
+        specification is passed to both loaders. The commit the weights came from is read
+        from the model's configuration.
 
         Returns:
             The loaded runtime.
 
         Raises:
-            ConfigurationError: If torch or transformers is not installed, or the dtype
-                of the specification is not a torch dtype.
+            ConfigurationError: If torch or transformers is not installed, the installed
+                transformers is not below the specification's ``transformers_below`` (the
+                message names the reason and the release line to install), the dtype of
+                the specification is not a torch dtype, or the tokenizer or the model fails
+                to load (the message names the encoder, its revision, whether the
+                repository's own code was allowed, the installed transformers and torch
+                versions and the original error, which it is raised from).
         """
         if self._runtime is not None:
             return self._runtime
         torch = _import_required("torch")
         transformers = _import_required("transformers")
+        torch_version, transformers_version = str(torch.__version__), str(transformers.__version__)
+        check_transformers_line(self.spec, transformers_version)
         pooling = importlib.import_module("copernicus.embeddings.pooling")
         spec = self.spec
         device = torch.device(self.device if self.device is not None else self._best_device(torch))
@@ -147,16 +163,19 @@ class Encoder:
                 )
             options["dtype"] = dtype
         logger.info("loading encoder %s (%s) on %s", spec.name, spec.hf_id, device)
-        tokenizer = transformers.AutoTokenizer.from_pretrained(
-            spec.hf_id, trust_remote_code=spec.trust_remote_code, **pinned
-        )
+        with loading("tokenizer", spec, transformers_version, torch_version):
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
+                spec.hf_id, trust_remote_code=spec.trust_remote_code, **pinned
+            )
         tokenizer.padding_side = spec.padding_side
-        model = transformers.AutoModel.from_pretrained(spec.hf_id, **options).to(device).eval()
+        with loading("model", spec, transformers_version, torch_version):
+            model = transformers.AutoModel.from_pretrained(spec.hf_id, **options)
+        model = model.to(device).eval()
         commit = getattr(model.config, "_commit_hash", None)
         versions = {
             LOADED_COMMIT_KEY: commit if isinstance(commit, str) else UNKNOWN_REVISION,
-            "torch_version": str(torch.__version__),
-            "transformers_version": str(transformers.__version__),
+            "torch_version": torch_version,
+            "transformers_version": transformers_version,
         }
         self._runtime = EncoderRuntime(
             torch, tokenizer, model, pooling.POOLING_FUNCTIONS[spec.pooling], device, versions
@@ -200,31 +219,23 @@ class Encoder:
             checkpoint_every: Chunks between two checkpoint writes; at least 1.
 
         Returns:
-            The embedding set, aligned with ``ids``.
+            The embedding set, aligned with ``ids``. Its sidecar records the encoder's
+            identity and versions, ``text_form`` ``"as_given"`` (the texts went to the
+            tokenizer exactly as they were passed here) and ``texts_hash``, the digest of
+            ``texts`` in their order (`copernicus._digests.texts_hash`).
 
         Raises:
             ConfigurationError: If there are no texts, ids and texts differ in number,
                 ids repeat, a text is empty or whitespace only (the first ten such ids are
-                named), or a checkpoint belongs to other texts, another encoder, or another
-                commit of the model (the default branch of its repository moved).
+                named), the installed transformers is not below the ``transformers_below``
+                of the specification (checked before the model is downloaded or loaded), the
+                tokenizer or the model fails to load (the message says what was being
+                loaded, and the original error stays in the traceback), or a checkpoint
+                belongs to other texts, another encoder, or another commit of the model (the
+                default branch of its repository moved).
             SettingsError: If ``checkpoint_every`` is below 1.
         """
-        if len(texts) == 0:
-            raise ConfigurationError("there are no texts to embed")
-        if len(ids) != len(texts):
-            raise ConfigurationError(f"{len(ids)} ids for {len(texts)} texts")
-        if len(set(map(str, ids))) != len(ids):
-            raise ConfigurationError("ids must be unique")
-        blank = [str(text_id) for text_id, text in zip(ids, texts, strict=True) if not text.strip()]
-        if blank:
-            shown = ", ".join(repr(text_id) for text_id in blank[:MAX_IDS_IN_MESSAGE])
-            rest = len(blank) - MAX_IDS_IN_MESSAGE
-            raise ConfigurationError(
-                f"{len(blank)} texts are empty or whitespace only and cannot be embedded: "
-                f"{shown}" + (f" and {rest} more" if rest > 0 else "")
-            )
-        if checkpoint_every < 1:
-            raise SettingsError(f"checkpoint_every must be at least 1, got {checkpoint_every}")
+        check_embedding_request(texts, ids, checkpoint_every)
         runtime = self._load()
         fragments: list[str] = []
         owner: list[int] = []
@@ -253,14 +264,23 @@ class Encoder:
             chunk_weight=weight,
             encoder=self.spec.name,
             metadata=None,
-            sidecar={**self.spec.identity(), **runtime.versions},
+            sidecar={
+                **self.spec.identity(),
+                **runtime.versions,
+                TEXT_FORM_KEY: TEXT_FORM_AS_GIVEN,
+                TEXTS_HASH_KEY: texts_hash(list(texts)),
+            },
         )
         if checkpoint is not None:
             checkpoint_file(checkpoint).unlink(missing_ok=True)
         return result
 
     def embed_table(self, table: TextTable, **options: Any) -> EmbeddingSet:
-        """Embed the texts of a text table; its other columns become the metadata.
+        """Embed the texts of a text table as it keeps them; its other columns become the metadata.
+
+        The table keeps each text as given with only its ends stripped, so line breaks, tabs
+        and runs of spaces reach the tokenizer, and the ``texts_hash`` of the set is the digest
+        of the table's texts in table order.
 
         Args:
             table: The text table.

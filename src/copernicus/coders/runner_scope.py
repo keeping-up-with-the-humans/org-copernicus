@@ -2,7 +2,7 @@
 
 The scope is the texts of the text range times the runs 1 to ``runs``. Every cell of the
 scope is coded, coded again, or kept from the store, and a kept cell must have been coded on
-the text the table now holds under its id.
+the text the table now holds under its id, as the coder sends it.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import get_args
 
 from copernicus.coders.store_cells import StoredCell, listed_ids
+from copernicus.coders.text_hash import COLLAPSED_CODING, COLLAPSED_FORM, split_collapsed
 from copernicus.coders.two_stage_types import Status
 from copernicus.errors import StoreError
 
@@ -48,6 +49,14 @@ class Scope:
     stored_status_counts: Mapping[str, int]
 
 
+def _stored_hashes(cells: Mapping[tuple[str, int], StoredCell]) -> dict[str, set[str]]:
+    """Return the text hashes that the stored cells hold under each text id, whatever the run."""
+    stored: dict[str, set[str]] = {}
+    for (text_id, _), cell in cells.items():
+        stored.setdefault(text_id, set()).add(cell.text_hash)
+    return stored
+
+
 def changed_text_ids(
     text_ids: Sequence[str],
     hashes: Mapping[str, str],
@@ -66,9 +75,7 @@ def changed_text_ids(
     Returns:
         The ids that have a stored cell whose text hash differs from ``hashes``.
     """
-    stored: dict[str, set[str]] = {}
-    for (text_id, _), cell in cells.items():
-        stored.setdefault(text_id, set()).add(cell.text_hash)
+    stored = _stored_hashes(cells)
     return [
         text_id
         for text_id in text_ids
@@ -76,9 +83,35 @@ def changed_text_ids(
     ]
 
 
+def _refusal(
+    changed: Sequence[str],
+    collapsed: Mapping[str, str],
+    cells: Mapping[tuple[str, int], StoredCell],
+    store_path: Path,
+) -> str:
+    """Describe the changed ids: those coded on another text, then those coded collapsed."""
+    texts = [(text_id, collapsed[text_id]) for text_id in changed]
+    on_collapsed, others = split_collapsed(texts, _stored_hashes(cells))
+    parts: list[str] = []
+    if others:
+        noun = "text id" if len(others) == 1 else "text ids"
+        parts.append(
+            f"{CHANGED_TEXTS} (store {store_path}; {len(others)} changed {noun}: "
+            f"{listed_ids(others)})"
+        )
+    if on_collapsed:
+        noun, verb = ("text id", "was") if len(on_collapsed) == 1 else ("text ids", "were")
+        parts.append(
+            f"{len(on_collapsed)} {noun} of the store {store_path} {verb} coded "
+            f"{COLLAPSED_FORM}: {listed_ids(on_collapsed)}; {COLLAPSED_CODING}"
+        )
+    return "; ".join(parts)
+
+
 def plan_scope(
     texts: Sequence[tuple[str, object]],
     hashes: Mapping[str, str],
+    collapsed: Mapping[str, str],
     runs: int,
     cells: Mapping[tuple[str, int], StoredCell],
     retry_failed: bool,
@@ -89,7 +122,10 @@ def plan_scope(
     Args:
         texts: ``(text id as string, original id)`` of the texts of the range, in text-id
             order.
-        hashes: The text hash of the text of each id, as the coder receives it.
+        hashes: The text hash of the text of each id, as the coder sends it.
+        collapsed: The text hash of the text of each id with every run of whitespace
+            collapsed to one space (`copernicus.coders.text_hash.collapsed_hash`), the hash
+            that an earlier version of the library stored for it.
         runs: The runs 1 to ``runs`` belong to the scope.
         cells: The cells the store holds.
         retry_failed: Whether a stored cell with a failed attribute is coded again.
@@ -99,16 +135,13 @@ def plan_scope(
         The scope.
 
     Raises:
-        StoreError: If a text of the range has a stored cell that was coded on another text;
-            the message names the first ten such ids and is raised before anything is coded.
+        StoreError: If a text of the range has a stored cell that was coded on another text,
+            or on the text with its whitespace collapsed; the message names the first ten ids
+            of each kind, says what to do, and is raised before anything is coded.
     """
     changed = changed_text_ids([text_id for text_id, _ in texts], hashes, cells)
     if changed:
-        noun = "text id" if len(changed) == 1 else "text ids"
-        raise StoreError(
-            f"{CHANGED_TEXTS} (store {store_path}; {len(changed)} changed {noun}: "
-            f"{listed_ids(changed)})"
-        )
+        raise StoreError(_refusal(changed, collapsed, cells, store_path))
     pending: list[tuple[str, object, tuple[int, ...]]] = []
     retry: set[tuple[str, int]] = set()
     stored: Counter[str] = Counter()

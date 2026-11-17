@@ -148,7 +148,12 @@ def _build_attribute(data: dict[str, Any]) -> Attribute:
 
 
 def _build_marker(data: dict[str, Any]) -> Marker:
-    """Build one marker from validated data, with levels ordered 1 to 5."""
+    """Build one marker from validated data, with levels ordered 1 to 5.
+
+    The level order is the order of the keys of the sub-rubric, the order in which the file
+    lists the levels. The schema admits the keys ``"1"`` to ``"5"`` and no other, each once,
+    so the keys name every level once.
+    """
     sub_rubric = data["sub_rubric"]
     levels = tuple(
         Level(
@@ -163,6 +168,7 @@ def _build_marker(data: dict[str, Any]) -> Marker:
         name=data["name"],
         description=data["description"],
         levels=levels,
+        level_order=tuple(int(key) for key in sub_rubric),
     )
 
 

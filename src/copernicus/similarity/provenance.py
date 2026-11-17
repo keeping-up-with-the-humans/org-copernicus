@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from copernicus._io import encoder_identity, encoder_versions
+from copernicus._load_check import LOAD_COMPARISON_KEY, compare_loads
 from copernicus._version import __version__
 from copernicus.embeddings import EmbeddingSet
 from copernicus.rubric.model import Rubric
@@ -104,10 +105,18 @@ def scoring_provenance(
     Returns:
         ``coder``, ``settings`` (one mapping per setting), ``texts`` (the encoder
         description and ``n_texts``), ``references`` (see `references_provenance`, with the
-        rubric hash the references were written for), ``rubric_id`` and ``rubric_hash`` of
+        rubric hash the references were written for), ``load_comparison`` (the
+        transformers and torch versions of the texts and of the references, ``"unknown"``
+        for one that a sidecar does not record, and the warnings that scoring logged for
+        two loads it does not refuse, empty when the loads agree; see
+        `copernicus._load_check.compare_loads`), ``rubric_id`` and ``rubric_hash`` of
         ``rubric``, ``n_rows``, ``library_version``, and ``created_at``. Scoring refuses
         references whose rubric hash differs from the rubric's, so after a scoring run the
         two hashes are equal.
+
+    Raises:
+        ConfigurationError: If a sidecar lacks an identity key, or texts and references
+            come from two loads that scoring refuses.
     """
     return {
         "coder": SIMILARITY_CODER,
@@ -117,6 +126,7 @@ def scoring_provenance(
             "n_texts": len(texts),
         },
         "references": references_provenance(refs),
+        LOAD_COMPARISON_KEY: compare_loads(texts.sidecar, refs.sidecar),
         **rubric_provenance(rubric),
         "n_rows": n_rows,
         **library_stamp(),

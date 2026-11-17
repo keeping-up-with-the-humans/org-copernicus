@@ -329,7 +329,7 @@ def user_message_for_text(text: str) -> str:
     """Build the user message that hands a text to the extraction or one-stage prompt.
 
     Args:
-        text: The text to code.
+        text: The text to code; it is sent as given, its line breaks included.
 
     Returns:
         The message text.

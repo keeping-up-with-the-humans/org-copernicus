@@ -1,18 +1,19 @@
 """Embedding-augmented calibration: ridge regression on text embeddings, with or without a score.
 
 The embeddings of a text come from one encoder's set, or from ``"stacked"``: every set of the
-data concatenated in mapping order, each set z-scored and weighted to the same total variance
-with the baseline's ``fit_scaler``. They are standardised on the training rows and enter a
-ridge regression with an unpenalised intercept. Three variants:
+data concatenated in mapping order, each set z-scored and weighted by ``sqrt(mean_dim / dim)``
+with the baseline's ``fit_scaler``, which gives the sets the same total variance when no
+column of any set is constant on the training rows. They are standardised on the training
+rows and enter a ridge regression with an unpenalised intercept. Three variants:
 
 * ``embeddings_only``: ridge of the gold value on the embeddings. It reads no score, so it is
   the yardstick for the incremental validity of the coders.
 * ``embeddings_plus_score``: ridge on the embeddings and the best score column; the score is
   standardised with its mean and population standard deviation over the training rows
   (fixed across the deletions) and then penalised like the embeddings. The original analysis
-  appended the raw score, which was harmless because its scores shared one rating scale;
-  this library receives scores on arbitrary scales, and a raw column would make the validity
-  and the chosen penalty depend on the score's units.
+  appended the score in its own units, so the score's spread set how strongly the penalty
+  shrank it relative to the embedding features; standardised, the result and the chosen
+  penalty do not depend on the score's units.
 * ``score_anchored_residual``: the least-squares calibration line of the gold value on the
   best score column, plus a ridge of the line's residual on the embeddings. It nests linear
   calibration: when the embeddings carry nothing, the chosen penalty shrinks the residual

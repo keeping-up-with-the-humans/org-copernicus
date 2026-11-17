@@ -23,6 +23,8 @@ SIDECAR = {
     "padding_side": "right",
     "special_tokens_reserved": 2,
 }
+# The versions an encoder records; texts and references built here share them, as one load gives.
+VERSIONS = {"torch_version": "2.5.0", "transformers_version": "4.57.6"}
 
 
 def unit(rows: np.ndarray) -> np.ndarray:
@@ -38,7 +40,8 @@ def make_texts(
 ) -> EmbeddingSet:
     """Build an embedding set; ``chunk_vectors`` lists the chunk rows of each text.
 
-    Without ``chunk_vectors`` every text has one chunk equal to its vector.
+    Without ``chunk_vectors`` every text has one chunk equal to its vector. The sidecar holds
+    the identity keys and the versions of `VERSIONS`.
     """
     vectors = unit(text_vectors)
     chunks = [vectors[[row]] for row in range(len(vectors))]
@@ -53,7 +56,7 @@ def make_texts(
         chunk_weight=np.ones(len(owner), dtype=np.int64),
         encoder=encoder,
         metadata=None,
-        sidecar=dict(SIDECAR),
+        sidecar={**SIDECAR, **VERSIONS},
     )
 
 
@@ -69,7 +72,8 @@ def make_references(
 
     Every target of the rubric gets ``per_pole`` references per polarity and writer;
     ``style`` is one name or one per writer. The sidecar binds the references to the id and
-    the content hash of ``rubric``, as ``for_rubric`` binds a set written by hand.
+    the content hash of ``rubric``, as ``for_rubric`` binds a set written by hand, and holds
+    the versions of `VERSIONS`.
     """
     rng = np.random.default_rng(seed)
     targets = ["construct", *(attribute.attribute_id for attribute in rubric.attributes)]
@@ -96,6 +100,7 @@ def make_references(
         encoder=encoder,
         sidecar={
             **SIDECAR,
+            **VERSIONS,
             "rubric_id": rubric.rubric_id,
             "rubric_hash": rubric.content_hash(),
             "bound_with": "for_rubric",

@@ -1,5 +1,8 @@
+import sys
+
 import pytest
 
+import copernicus.coders.matching as matching
 from copernicus.coders import (
     MIN_FUZZY_WORDS,
     VERIFIED_EXACT,
@@ -79,6 +82,22 @@ def test_empty_quote_or_document_is_unverified_without_a_window() -> None:
 def test_normalize_unifies_quotes_dashes_and_whitespace() -> None:
     assert normalize("  “Hello”   —  ’x’ ") == "\"hello\" - 'x'"
     assert collapse_whitespace(" a \n\n b\tc ") == "a b c"
+
+
+def test_the_passage_check_collapses_whitespace_by_the_one_rule(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+
+    def recording(text: str) -> str:
+        seen.append(text)
+        return collapse_whitespace(text)
+
+    monkeypatch.setattr(matching, "collapse_whitespace", recording)
+    assert normalize("First line.\nSecond  LINE.") == "first line. second line."
+    assert seen == ["First line.\nSecond  LINE."]
+    for space in (chr(code) for code in range(sys.maxunicode + 1) if chr(code).isspace()):
+        assert normalize(f"{space}A{space}{space}b{space}") == "a b", repr(space)
 
 
 def test_process_extraction_records_all_and_builds_document_ordered_unlabelled_list(

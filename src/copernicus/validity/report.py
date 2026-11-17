@@ -29,6 +29,7 @@ HEADERS = (
     "noise",
     "share of ceiling",
 )
+GROUP_HEADERS = ("target", "groups", "texts", *HEADERS[2:])
 RANK_VALIDITY_NOTE = (
     "Rank validity is an absolute value; its interval is bounded below by 0 and does not test "
     "zero validity."
@@ -54,13 +55,14 @@ def _share(row: pd.Series) -> str:
     )
 
 
-def _table_rows(frame: pd.DataFrame) -> list[tuple[str, ...]]:
+def _table_rows(frame: pd.DataFrame, by_group: bool) -> list[tuple[str, ...]]:
     rows: list[tuple[str, ...]] = []
     for _, row in frame.iterrows():
+        counts = (str(row["n"]), str(row["n_texts"])) if by_group else (str(row["n"]),)
         rows.append(
             (
                 str(row["target"]),
-                str(row["n"]),
+                *counts,
                 _rank_validity(row),
                 _number(row["mae_01"]),
                 _number(row["level_displacement"]),
@@ -73,10 +75,10 @@ def _table_rows(frame: pd.DataFrame) -> list[tuple[str, ...]]:
     return rows
 
 
-def _fixed_width(rows: list[tuple[str, ...]]) -> list[str]:
-    widths = [max(len(line[column]) for line in [HEADERS, *rows]) for column in range(len(HEADERS))]
+def _fixed_width(rows: list[tuple[str, ...]], headers: tuple[str, ...]) -> list[str]:
+    widths = [max(len(line[column]) for line in [headers, *rows]) for column in range(len(headers))]
     lines = []
-    for line in [HEADERS, *rows]:
+    for line in [headers, *rows]:
         cells = [
             cell.ljust(width) if column == 0 else cell.rjust(width)
             for column, (cell, width) in enumerate(zip(line, widths, strict=True))
@@ -161,7 +163,12 @@ def render_report(panel: ValidityPanel) -> str:
     (no group column)`` when every text was its own cluster of the bootstrap; a fixed-width
     table with one row per target (number of texts, rank validity with its interval, mean
     absolute error on the 0-1 scale, level displacement, calibration shortfall,
-    covariate-linked error, noise and the share of the reliability ceiling); a note under
+    covariate-linked error, noise and the share of the reliability ceiling). Under
+    ``unit="group"`` the header line says that one score per group, the mean over its
+    texts that were scored for the target, is compared with the group's gold value, and the
+    number of texts dropped counts those without a gold value; the covariate line says that the
+    covariate is averaged over each group's texts, and the table gives the number of groups
+    and the number of texts behind them in place of the number of texts; a note under
     the table that rank validity is an absolute value, whose interval is bounded below by 0
     and does not test zero validity; a paragraph naming the targets whose status is not
     ``ok``; a line naming the targets whose score was negated before every metric
@@ -182,16 +189,26 @@ def render_report(panel: ValidityPanel) -> str:
     frame = panel.frame
     settings = panel.settings
     covariate = frame["covariate"].iloc[0]
-    header = (
-        f"Validity panel: {panel.n_used} texts entered, {panel.n_dropped_missing} dropped for a "
-        f"missing score, gold value or covariate."
-    )
+    by_group = settings.unit == "group"
+    if by_group:
+        header = (
+            f"Validity panel: one score per group, the mean over its texts that were scored for "
+            f"the target, against the group's gold value; {panel.n_used} texts entered, "
+            f"{panel.n_dropped_missing} dropped for a missing gold value."
+        )
+    else:
+        header = (
+            f"Validity panel: {panel.n_used} texts entered, {panel.n_dropped_missing} dropped "
+            f"for a missing score, gold value or covariate."
+        )
     grouping = f"; {ONE_GROUP_PER_TEXT}" if panel.groups_defaulted else ""
+    averaged = ", averaged over each group's texts" if by_group else ""
     basis = (
         f"Intervals: 95 percent, group-clustered bootstrap, {settings.n_boot} replicates, "
-        f"seed {settings.seed}{grouping}. Covariate: {covariate} ({settings.covariate_scale})."
+        f"seed {settings.seed}{grouping}. Covariate: {covariate} ({settings.covariate_scale})"
+        f"{averaged}."
     )
-    table = _fixed_width(_table_rows(frame))
+    table = _fixed_width(_table_rows(frame, by_group), GROUP_HEADERS if by_group else HEADERS)
     status = _status_paragraph(frame)
     notes = [*_direction_lines(frame), *_sign_warnings(frame)]
     return "\n".join([header, basis, "", *table, RANK_VALIDITY_NOTE, "", status, *notes, ""])

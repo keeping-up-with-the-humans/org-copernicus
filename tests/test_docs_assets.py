@@ -52,6 +52,12 @@ NOT_COPIED_BUILDS = ("site", "dist", "build", "*.egg-info", ".git", ".hypothesis
 STRAY_FILES = ("scores.csv", "notes.txt", "outputs/summary.json", "docs_draft.md")
 # An install by the wrong package-index name: the distribution is org-copernicus.
 INDEX_INSTALL = re.compile(r"""pip install +["']?copernicus(?:\[[\w,]+\])?["']?(?![\w./-])""")
+# What installing from the package index needs, in the same words on both installation pages.
+INDEX_SENTENCE = (
+    "`pip install org-copernicus` installs the package once a release has been uploaded to the "
+    "package index; none has been uploaded so far; until then it is installed from its root folder "
+    "or from a wheel built there:"
+)
 
 
 def package_data_files() -> set[str]:
@@ -108,7 +114,7 @@ def test_citation_file_is_valid_and_withholds_the_authors() -> None:
     cff = yaml.safe_load((LIBRARY_ROOT / "CITATION.cff").read_text(encoding="utf-8"))
     assert cff["cff-version"] == "1.2.0"
     assert cff["type"] == "software"
-    assert cff["version"] == "0.1.0"
+    assert cff["version"] == "0.2.0"
     assert cff["license"] == "MIT"
     assert cff["authors"] == [{"name": "Author names withheld"}]
     assert cff["repository-code"] == REPOSITORY_URL
@@ -156,6 +162,23 @@ def test_changelog_lists_the_release_and_keeps_the_provenance_line() -> None:
     text = (LIBRARY_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
     assert "## 0.1.0" in text
     assert "53d269895adae41edfce7f4df9c9a201f23eff00d6029a3eb5298e8c38a734df" in text
+
+
+def test_the_changelog_says_which_texts_a_store_of_0_1_0_keeps_and_which_it_refuses() -> None:
+    lines = (LIBRARY_ROOT / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+    (bullet,) = [line for line in lines if line.startswith("- **Texts as given.**")]
+    assert "for every text whose kept form equals its collapsed form" in bullet
+    assert "A text whose kept form differs from its collapsed form" in bullet
+
+
+def test_the_changelog_says_which_one_stage_stores_of_0_1_0_resume_and_which_are_refused() -> None:
+    lines = (LIBRARY_ROOT / "CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+    (bullet,) = [line for line in lines if line.startswith("- **One-stage level order.**")]
+    assert "`Rubric.content_hash` does not see it" in bullet
+    assert "lists every marker's levels from 5 down to 1 resumes and merges as before" in bullet
+    assert "a one-stage store of version 0.1.0 is refused" in bullet
+    default = "a marker built in code lists its levels in its `level_order`, by default from 5 down"
+    assert default in bullet
 
 
 @pytest.mark.skipif(BUILD_TOOLS_MISSING, reason=BUILD_TOOLS_REASON)
@@ -269,7 +292,8 @@ def test_no_page_installs_the_package_by_its_index_name() -> None:
     for page in (README, LIBRARY_ROOT / "docs" / "installation.md"):
         text = page.read_text(encoding="utf-8")
         assert "pip install org-copernicus" in text, page.name
-        assert "once the first release is published" in text, page.name
+        assert INDEX_SENTENCE in text, page.name
+        assert "once the first release is published" not in text, page.name
         assert "settled at release" not in text, page.name
 
 

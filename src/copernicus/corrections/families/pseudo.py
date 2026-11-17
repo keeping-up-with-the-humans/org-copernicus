@@ -18,11 +18,14 @@ A labelled sample without inclusion probabilities cannot be rectified: pass the 
 by ``draw_human_sample`` through ``attach_draw``, or supply a ``pi`` column.
 
 The prediction-powered tuning coefficient ``lambda_star = cov(gold, ghat) / var(ghat)`` on the
-labelled rows uses population moments (divisor ``n``) in both terms, and is 1 when ``ghat`` is
-constant there. The power-tuned mean is
-``mean(gold_lab) + lambda_star * (mean(ghat_all) - mean(ghat_lab))``. It weights every labelled
-text alike, so it assumes one ``pi`` on the labelled rows; when ``pi`` differs between them it is
-not design-consistent and is reported as NaN (``mean_rectified`` remains the unbiased mean).
+labelled rows uses population moments (divisor ``n``) in both terms, with no floor and no cap.
+It is undefined when ``ghat`` is constant there (``is_constant``): ``tuning_coefficient`` then
+refuses, and ``pseudo_values`` reports ``lambda_star`` and the tuned mean as NaN, gives the
+reason in ``lambda_star_reason`` and ``mean_rectified_tuned_reason``, and logs a warning. The
+power-tuned mean is ``mean(gold_lab) + lambda_star * (mean(ghat_all) - mean(ghat_lab))``. It
+weights every labelled text alike, so it assumes one ``pi`` on the labelled rows; when ``pi``
+differs between them it is not design-consistent and is reported as NaN with that reason
+(``mean_rectified`` remains the unbiased mean).
 
 The estimate-level functions for means, differences and coefficients reuse the inclusion
 probability check (``inclusion_probabilities``) and the tuning coefficient
@@ -68,16 +71,21 @@ class PseudoValues:
         column: The pseudo-value of every text, indexed by text id in data order.
         ghat: The prediction of the gold value of every text, same index.
         lambda_star: The tuning coefficient ``cov(gold, ghat) / var(ghat)`` on the labelled
-            rows (population moments), 1 when ``ghat`` is constant there.
+            rows (population moments); NaN when ``ghat`` is constant there (``is_constant``),
+            where the coefficient is undefined.
         mean_plugin: The mean of ``ghat`` over all texts.
         mean_rectified: The mean of ``column`` over all texts.
         mean_rectified_tuned: ``mean(gold_lab) + lambda_star * (mean(ghat_all) -
-            mean(ghat_lab))``; NaN when ``pi`` differs between labelled rows, because the
-            formula weights every labelled text alike.
+            mean(ghat_lab))``; NaN when ``lambda_star`` is NaN, and when ``pi`` differs between
+            labelled rows, because the formula weights every labelled text alike.
         rectifier: ``identity``, ``calibrated`` or ``crossfit``.
         score_column: The score column ``ghat`` reads; for ``crossfit`` the distinct columns
             the folds chose, sorted and joined with ``|``.
         n_labelled: Number of labelled texts.
+        lambda_star_reason: ``None`` when ``lambda_star`` is defined; otherwise one sentence
+            that says why it is missing.
+        mean_rectified_tuned_reason: ``None`` when ``mean_rectified_tuned`` is defined;
+            otherwise one sentence that says why it is missing and names every cause.
     """
 
     column: pd.Series
@@ -89,6 +97,8 @@ class PseudoValues:
     rectifier: str
     score_column: str
     n_labelled: int
+    lambda_star_reason: str | None = None
+    mean_rectified_tuned_reason: str | None = None
 
 
 def inclusion_probabilities(
@@ -153,20 +163,90 @@ def _predictions(
     return ghat, "|".join(sorted(set(chosen)))
 
 
-def tuning_coefficient(ghat_labelled: np.ndarray, gold_labelled: np.ndarray) -> float:
+def _constant_prediction(ghat_labelled: np.ndarray) -> str:
+    """Why the tuning coefficient is undefined on the labelled rows, or ``""`` when it is not.
+
+    The coefficient divides by the variance of the prediction, so it is undefined where the
+    prediction is constant by the library's rule (``is_constant``).
+    """
+    if not is_constant(ghat_labelled):
+        return ""
+    low, high = float(np.min(ghat_labelled)), float(np.max(ghat_labelled))
+    values = (
+        f"each is {low!r}" if low == high else f"from {low!r} to {high!r}, equal up to rounding"
+    )
+    return f"the prediction is constant on the labelled rows ({ghat_labelled.size} rows, {values})"
+
+
+def _missing_reasons(constant: str, unequal_pi: np.ndarray | None) -> tuple[str | None, str | None]:
+    """Why ``lambda_star`` and ``mean_rectified_tuned`` are missing, ``None`` where defined.
+
+    Args:
+        constant: What ``_constant_prediction`` found, ``""`` when the weight is defined.
+        unequal_pi: The inclusion probabilities of the labelled rows when they differ, else
+            ``None``.
+
+    Returns:
+        One sentence for the weight and one for the tuned mean, which names every cause.
+    """
+    causes: list[str] = []
+    if constant:
+        causes.append(f"its weight is undefined, as {constant}")
+    if unequal_pi is not None:
+        causes.append(
+            "it weights every labelled text alike and so needs one inclusion probability on the "
+            f"labelled rows, where pi ranges from {float(unequal_pi.min()):.4g} to "
+            f"{float(unequal_pi.max()):.4g}"
+        )
+    weight_reason = (
+        f"The tuning weight cov(gold, ghat) / var(ghat) is undefined because {constant}."
+        if constant
+        else None
+    )
+    tuned_reason = (
+        "The tuned mean is missing because " + ", and because ".join(causes) + "."
+        if causes
+        else None
+    )
+    return weight_reason, tuned_reason
+
+
+def tuning_coefficient(
+    ghat_labelled: np.ndarray, gold_labelled: np.ndarray, *, purpose: str = "power tuning"
+) -> float:
     """The power-tuning coefficient ``lambda_star = cov(gold, ghat) / var(ghat)``.
 
-    Both moments are population moments (divisor ``n``) over the labelled rows.
+    Both moments are population moments (divisor ``n``) over the labelled rows. The
+    coefficient has no floor and no cap: it is negative when gold and prediction covary
+    negatively, and it exceeds 1 when their covariance exceeds the variance of the prediction,
+    as for a prediction that follows the gold on a compressed scale.
 
     Args:
         ghat_labelled: The prediction on the labelled rows.
         gold_labelled: The gold values on the same rows.
+        purpose: What needs the coefficient, for the message (such as an estimator's name).
 
     Returns:
-        The coefficient, or 1 when the prediction is constant on those rows.
+        The coefficient.
+
+    Raises:
+        EstimatorError: If no labelled row is given, or the prediction is constant on those
+            rows (``is_constant``), where the coefficient is undefined; the message names the
+            rows and what to do.
     """
-    if is_constant(ghat_labelled):
-        return 1.0
+    if ghat_labelled.size == 0:
+        raise EstimatorError(
+            f"{purpose} needs the tuning weight cov(gold, prediction) / var(prediction) over the "
+            "labelled rows, and no labelled row was given: pass the prediction and the gold "
+            "values of the human-coded texts"
+        )
+    constant = _constant_prediction(ghat_labelled)
+    if constant:
+        raise EstimatorError(
+            f"{purpose} needs the tuning weight cov(gold, prediction) / var(prediction) over the "
+            f"labelled rows, which is undefined because {constant}: estimate without power "
+            "tuning (power_tuning=False), or with a prediction that varies on the labelled rows"
+        )
     covariance = float(
         np.mean((gold_labelled - gold_labelled.mean()) * (ghat_labelled - ghat_labelled.mean()))
     )
@@ -192,6 +272,11 @@ def pseudo_values(
     see its group's gold values (``gold ~ 1 + score + covariate`` fitted by grouped inner
     folds, the column chosen on a group-level half of each fold's labelled groups); it ignores
     ``score_column``.
+
+    Where ``ghat`` is constant on the labelled rows, the tuning coefficient is undefined:
+    ``lambda_star`` and ``mean_rectified_tuned`` are NaN, ``lambda_star_reason`` and
+    ``mean_rectified_tuned_reason`` say why and a warning is logged, while the column and
+    ``mean_rectified``, which do not use the coefficient, are computed as always.
 
     Args:
         data: The correction data with gold on the labelled rows and ``pi`` on every
@@ -231,10 +316,23 @@ def pseudo_values(
     correction[labelled] = (gold[labelled] - ghat[labelled]) / pi[labelled]
     rectified = ghat + correction
     ghat_labelled, gold_labelled = ghat[labelled], gold[labelled]
-    lambda_star = tuning_coefficient(ghat_labelled, gold_labelled)
     mean_plugin = float(ghat.mean())
-    tuned = float(gold_labelled.mean() + lambda_star * (mean_plugin - ghat_labelled.mean()))
-    if not is_constant(pi[labelled]):
+    constant = _constant_prediction(ghat_labelled)
+    if constant:
+        logger.warning(
+            "pseudo-values (%s): the tuning weight cov(gold, ghat) / var(ghat) is undefined "
+            "because %s, so lambda_star and mean_rectified_tuned are NaN; the column and "
+            "mean_rectified do not use the weight. A tuned mean needs a prediction that varies "
+            "on the labelled rows",
+            rectifier,
+            constant,
+        )
+        lambda_star = tuned = float("nan")
+    else:
+        lambda_star = tuning_coefficient(ghat_labelled, gold_labelled)
+        tuned = float(gold_labelled.mean() + lambda_star * (mean_plugin - ghat_labelled.mean()))
+    unequal = not is_constant(pi[labelled])
+    if unequal:
         logger.info(
             "the power-tuned mean weights every labelled text alike and needs one pi on the "
             "labelled rows; pi ranges from %.4g to %.4g, so mean_rectified_tuned is NaN",
@@ -242,6 +340,7 @@ def pseudo_values(
             float(pi[labelled].max()),
         )
         tuned = float("nan")
+    weight_reason, tuned_reason = _missing_reasons(constant, pi[labelled] if unequal else None)
     index = pd.Index(data.ids)
     logger.debug(
         "pseudo-values (%s) on %d labelled of %d texts", rectifier, int(labelled.sum()), data.n
@@ -256,6 +355,8 @@ def pseudo_values(
         rectifier=rectifier,
         score_column=column_name,
         n_labelled=int(labelled.sum()),
+        lambda_star_reason=weight_reason,
+        mean_rectified_tuned_reason=tuned_reason,
     )
 
 

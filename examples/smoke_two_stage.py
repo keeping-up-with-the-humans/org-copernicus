@@ -80,7 +80,12 @@ def parse_arguments(arguments: Sequence[str] | None) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description="Code the toy corpus with a real model.")
     parser.add_argument("--out", type=Path, required=True, help="folder for the run and the ledger")
-    parser.add_argument("--model", default=DEFAULT_MODEL, help="model name sent to the endpoint")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help="model name sent to the endpoint; a name with a maker in front (maker/gpt-5-mini) "
+        "is recognised by the part after the last slash",
+    )
     parser.add_argument("--texts", type=int, help="code the first N texts (default: all)")
     parser.add_argument("--runs", type=int, default=DEFAULT_RUNS, help="codings per text")
     parser.add_argument(

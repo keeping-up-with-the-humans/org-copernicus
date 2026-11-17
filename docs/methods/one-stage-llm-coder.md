@@ -8,17 +8,19 @@ This is the common way of coding text with a language model, as in studies that 
 
 For each text, run and attribute:
 
-1. **Length check.** A text shorter than `min_chars` (20) characters is not sent to the model; the attribute gets the status `too_short` and no score.
+1. **Length check.** The coder sends each text as the table keeps it, as the two-stage coder does. A text shorter than `min_chars` (20) characters, counted on that text, is not sent to the model; the attribute gets the status `too_short` and no score.
 2. **Wording and marker order.** The wording and the marker order are drawn exactly as for the two-stage coder, with `random.Random(seed + text_key * 1000 + run_number)`; the one-stage coder uses the `one_stage` texts of the role, task and level wordings.
-3. **The call.** The system prompt holds the role and task wording, the attribute, its markers in the drawn order, each marker's level descriptions as a mapping from level 5 down to level 1, the glossary, and the level wording. The user message is `Text to analyze:` followed by the text.
+3. **The call.** The system prompt holds the role and task wording, the attribute, its markers in the drawn order, each marker's level descriptions as a mapping in the order in which the rubric file lists the levels (for a marker built in code, in its `level_order`, by default from level 5 down to level 1), the glossary, and the level wording. The user message is `Text to analyze:` followed by the text.
 4. **The answer.** It must be a JSON object `{"dimension_result": {"result": 1 to 5, "explanation": "..."}}`. The result is checked under the rules of the two-stage coder's scoring stage: a whole-number float or a digit string counts, a boolean or a value outside 1 to 5 does not. An unusable answer is retried, up to `max_retries` (3) attempts in all, with the seed plus the attempt number and an unchanged temperature. After the last failure the status is `scoring_failed` and the score is missing, never 0.
 5. **Scores of a text.** As for the two-stage coder: the construct score of a run is the mean of the attribute scores that exist, and a text's score is the mean over runs.
 
-The statuses are `ok`, `too_short` and `scoring_failed`. The status `no_evidence` does not occur, because the coder never looks for evidence. The runner's failure ceiling, temperature rule and provenance are those of the two-stage coder.
+The statuses are `ok`, `too_short` and `scoring_failed`. The status `no_evidence` does not occur, because the coder never looks for evidence. The runner's failure ceiling, temperature rule and provenance are those of the two-stage coder, except that a one-stage store also records the level order of every marker of every attribute (`level_orders`) when the rubric lists the levels of some marker in another order than from 5 down to 1: the content hash of a rubric does not see that order, and a store coded with the levels in another order is not resumed.
 
 ## Assumptions and what it corrects
 
 The coder produces scores; it corrects nothing. It assumes that a model can weigh the whole text against the rubric in one pass. Nothing ties its score to a passage of the text, so a reader cannot audit why a text received its score, and the [hybrid coder](hybrid-coder.md), which needs passages, refuses a one-stage store.
+
+The construct score is the mean of the attribute scores, as for the two-stage coder, so it assumes that every attribute rises with the construct. For a rubric with an attribute scored toward the opposite pole, average the attribute scores yourself with that attribute reversed, or use the attribute scores.
 
 ## Parameters
 
@@ -58,6 +60,12 @@ Eighteen attribute calls make eighteen requests, one each, and the evidence tabl
 
 - The library checks that the result is an integer from 1 to 5 and retries otherwise; the paper's analysis code accepted the result without a range check.
 - The library's vLLM backend refuses a prompt longer than the model's context with an error; the paper's analysis code returned an empty string for it.
+- As for the two-stage coder, the text is sent as the table keeps it, and cleaning markup with `copernicus.data.strip_html` is the user's step; the paper's analysis code cleaned its stored texts first. The helper removes comments and spans in the form of a tag that it accepts, turns some block tags into line breaks, decodes character references closed by `;` and tidies the whitespace. The rule has a known limit: plain text between angle brackets is removed when it has the form of an accepted tag, as an element name (`<A>`), a word with a hyphen (`<well-known>`) or two words joined by a colon (`<Note:important>`). The ordered rules and their exceptions are in the [documentation of `strip_html`](../api/data.md#copernicus.data.strip_html).
+- The runner stops with an error when more than 10 percent of the attribute results end in `scoring_failed`; the paper's analysis code counted them and coded on.
+- A text id that is not a non-negative integer below `2**31` enters the seed of the wording draw as a hash, as for the two-stage coder, also an integer-looking id of a table read from a CSV or JSON-lines file; the paper's analysis code had integer ids only.
+- As for the two-stage coder, when an answer that does not read as JSON is repaired, the library converts the Python literals `True`, `False` and `None` and removes a comma before a closing bracket only outside the quoted strings; the paper's analysis code did both inside the strings too, so an explanation can differ, while the score is read the same.
+- As for the two-stage coder, the rubric's content hash in the identity of a run store records the order of the glossary, which the paper's hash of the rubric with sorted keys ignored, so reordering the glossary changes the identity of a run.
+- As for the two-stage coder, every result row records a hash of the text it was coded on, and the library refuses to resume a run or to merge stores when a text changed under its id; the paper's analysis code identified a text by its integer id alone, so a text that changed under an id already coded kept the codes made on the old text.
 
 ## Literature
 

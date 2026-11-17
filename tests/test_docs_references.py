@@ -1,13 +1,12 @@
 """The literature of the documentation: every citation has its entry and every entry is cited.
 
-``docs/methods/references.md`` holds the entries that the methods pages cite, copied verbatim from
-the reference list of the accompanying methods paper (under review). A citation is
+``docs/methods/references.md`` holds the entries that the methods pages cite. A citation is
 ``Author (Year)``, or ``Author Year`` inside parentheses, where ``Author`` is one surname, two
 surnames joined by ``and``, or one surname followed by ``et al.``, and the year is written as the
-entry writes it (``2023a``). Every citation on every page must name an entry, and every entry must
-be cited on a methods page. An entry is one line: the authors as surname and initials, separated
-by commas, the year in parentheses, and the rest of the reference, ending with a full stop. The
-entries are in alphabetical order, and no two of them are cited the same way.
+entry writes it, including any letter suffix. Every citation on every page must name an entry, and
+every entry must be cited on a methods page. An entry is one line: the authors as surname and
+initials, separated by commas, the year in parentheses, and the rest of the reference, ending with
+a full stop. The entries are in alphabetical order, and no two of them are cited the same way.
 """
 
 from __future__ import annotations

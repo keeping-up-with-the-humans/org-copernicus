@@ -17,7 +17,7 @@ from copernicus.coders import (
     hash_text,
 )
 from copernicus.coders.store_schema import is_blank, read_run_info
-from copernicus.errors import StoreError
+from copernicus.errors import ConfigurationError, StoreError
 from copernicus.rubric.model import Rubric
 
 ATTRIBUTES = ["specificity", "tone", "reasoning"]
@@ -226,6 +226,37 @@ def test_construct_scores_is_the_mean_of_the_numeric_scores_per_text_and_run():
     assert result.loc["a", "n_attributes_scored"] == 2
     assert math.isnan(result.loc["b", "construct_score"])
     assert result.loc["b", "n_attributes_scored"] == 0
+
+
+@pytest.mark.parametrize("dtype", ["object", "float64", "Int64"])
+def test_construct_scores_refuses_a_row_without_a_run_number_and_names_its_texts(
+    dtype: str,
+) -> None:
+    # Grouped by run number, such rows would vanish: a's third row from its run, c altogether.
+    numeric = pd.DataFrame(
+        {
+            "text_id": ["a", "a", "a", "b", "c"],
+            "run_number": pd.array([1, 1, None, 1, None], dtype=dtype),
+            "attribute_id": ["x", "y", "y", "x", "x"],
+            "value": [1.0, 3.0, 5.0, 4.0, 2.0],
+        }
+    )
+    with pytest.raises(ConfigurationError) as refused:
+        construct_scores(numeric)
+    assert str(refused.value) == (
+        "score row(s) of text(s) 'a', 'c' have no run number, so construct_scores cannot tell "
+        "which of the text's runs they belong to; give every score row its run number, or drop "
+        "such rows to leave their scores out"
+    )
+
+
+def test_construct_scores_names_the_first_ten_texts_without_a_run_number() -> None:
+    ids = [f"t{index:02d}" for index in range(12)]
+    numeric = pd.DataFrame({"text_id": ids, "run_number": None, "attribute_id": "x", "value": 1.0})
+    with pytest.raises(ConfigurationError) as refused:
+        construct_scores(numeric)
+    shown = ", ".join(repr(text_id) for text_id in ids[:10])
+    assert f"text(s) {shown} and 2 more have no run number" in str(refused.value)
 
 
 def test_the_exports_take_the_store_path_as_text(store_path: Path) -> None:

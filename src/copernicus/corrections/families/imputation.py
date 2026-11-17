@@ -10,10 +10,9 @@ would understate it).
   ``sigma_m^2`` is the residual variance of that draw's bootstrap fit.
 * ``pmm``: each draw replaces the fitted mean of a text by the observed gold value of one
   of its ``k_donors`` nearest training donors by fitted mean, chosen at random. Every draw
-  therefore lies on the support of the observed gold values. The paper lists predictive mean
-  matching while its analysis battery removed the variant, so it ships with that note
-  (``REGISTRY["multiple_imputation"].note_for("pmm")``): its battery results have no
-  counterpart in the paper.
+  therefore lies on the support of the observed gold values. The paper's battery fitted
+  predictive mean matching beside the model draws, within this family, and the variant ships
+  with a note that says so (``REGISTRY["multiple_imputation"].note_for("pmm")``).
 
 The corrected value of a text is the mean over the draws, and ``draws`` returns all of
 them (shape ``[m, n]``) for pooling with ``rubin_pool``. The draws of a fitted object are
@@ -66,8 +65,9 @@ INFERENCE_NOTE = (
     "percent labelled; the default draws serve a point correction"
 )
 PMM_NOTE = (
-    "the paper lists predictive mean matching while its analysis battery removed the variant, "
-    "so its battery results have no counterpart in the paper"
+    "the paper's battery fitted predictive mean matching beside the model draws, within this "
+    "family; the library keys the draws to the row, so the random streams of both variants "
+    "differ from those of the paper's battery"
 )
 
 
@@ -206,8 +206,9 @@ class ImputationFitted:
 class MultipleImputation:
     """Bootstrap-then-impute draws of the gold value of every text.
 
-    ``pmm`` (predictive mean matching) ships with a note: the paper lists it while its analysis
-    battery removed it (see the module docstring).
+    ``pmm`` (predictive mean matching) ships with a note: the paper's battery fitted it beside
+    the model draws, and the library's draws, keyed to the row, give both variants other random
+    streams (see the module docstring).
 
     Attributes:
         variant: ``model_draws`` or ``pmm``.

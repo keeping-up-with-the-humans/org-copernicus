@@ -8,6 +8,7 @@ from itertools import product
 
 import pandas as pd
 
+from copernicus._load_check import compare_loads
 from copernicus.embeddings import ENCODERS, EmbeddingSet
 from copernicus.errors import ConfigurationError
 from copernicus.rubric.model import Rubric
@@ -54,7 +55,9 @@ def _check_key(
 ) -> None:
     """Check that a key's encoder and style match its inputs and its references the rubric.
 
-    Every refusal starts with the key, so a stale input of a sweep is named.
+    The comparison of the two loads of the encoder refuses here too, so that a key of
+    another load is refused before any key is scored; its warnings are logged when the key
+    is scored. Every refusal starts with the key, so a stale input of a sweep is named.
     """
     encoder, style = key
     for owner, name in ((texts.encoder, "embedding set"), (refs.encoder, "reference embeddings")):
@@ -62,6 +65,10 @@ def _check_key(
             raise ConfigurationError(
                 f"key {key}: the {name} was made with encoder {owner}, not {encoder}"
             )
+    try:
+        compare_loads(texts.sidecar, refs.sidecar)
+    except ConfigurationError as error:
+        raise ConfigurationError(f"key {key}: {error}") from error
     styles = sorted(set(refs.style.tolist()))
     if styles != [style]:
         raise ConfigurationError(f"key {key}: the reference embeddings have style {styles}")
@@ -116,12 +123,14 @@ def run_grid(
         columns identify the key.
 
     Raises:
-        ConfigurationError: If there is no input, a required key has none, the encoder or
-            style of a key disagrees with its embedding set or reference embeddings, the
-            reference embeddings of a key belong to another rubric or to another content
-            of it, or lack a pole (checked for every key before any key is scored; the
-            message starts with the key), the embedding sets of the keys hold different
-            text ids, or scoring fails.
+        ConfigurationError: If there is no input, a required key has none, the encoder or style of a
+            key disagrees with its embedding set or reference embeddings, the embedding set and the
+            reference embeddings of a key come from two loads of the encoder (another identity key
+            or loaded commit, transformers versions of two major versions or two epochs, or a
+            recorded version that cannot be read, as `copernicus.similarity.score_similarity` says),
+            the reference embeddings of a key belong to another rubric or to another content of it,
+            or lack a pole (checked for every key before any key is scored; the message starts with
+            the key), the embedding sets of the keys hold different text ids, or scoring fails.
     """
     if len(inputs) == 0:
         raise ConfigurationError("run_grid has no inputs")

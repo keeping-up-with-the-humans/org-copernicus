@@ -9,7 +9,7 @@ The hybrid coder joins the two ideas of the library. It first reads the verified
 - A **two-stage** run store, because the hybrid coder needs the passages. A one-stage store has none, and the coder refuses it.
 - Reference embeddings: the hand-written set of [the similarity coder](similarity-coder.md), built again below.
 
-To use a real model for the two-stage run, replace the backend line of the code below. This is a snippet to read, not to run:
+To use a real model for the two-stage run, replace the backend line of the code below. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. This is a snippet to read, not to run:
 
 ```python
 backend = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY
@@ -23,7 +23,7 @@ The hybrid step itself calls no model.
 2. A text with fewer words than `min_words` (default 40), or a text with no verified passage, is used as it is. The `fallback` column says which: `short`, `no_evidence`, or empty when the passages were used. A text that is not short and whose extraction failed gets no such label: the coder refuses it (see the pitfalls).
 3. The encoder embeds the evidence texts, and the similarity scorer compares them with the reference poles.
 
-The hybrid coder has its own defaults, which reproduce the paper's hybrid coder: the vector of each whole evidence text (`long_text="pooled_embedding"`), and each pole reduced once over the references of all writers (`writer_pooling="pooled"`), with the `pca` reduction and the net polarity. The similarity coder's defaults differ (`writer_pooling="mean"`, `long_text="max_chunk"`). `cop.hybrid.HYBRID_DEFAULTS` holds the hybrid settings.
+The hybrid coder has its own defaults. The vector of each whole evidence text (`long_text="pooled_embedding"`) and each pole reduced once over the references of all writers (`writer_pooling="pooled"`) follow the paper's analysis code. The paper varied the polarity and the reduction; the `pca` reduction with the net polarity, the defaults, is one of the settings it ran. The similarity coder's defaults differ (`writer_pooling="mean"`, `long_text="max_chunk"`). `cop.hybrid.HYBRID_DEFAULTS` holds the hybrid settings.
 
 ## Steps
 
@@ -120,6 +120,8 @@ print(
 for text_id, fallback, text in list(zip(evidence.ids, evidence.fallback, evidence.texts))[2:3]:
     print(text_id, repr(fallback))
     print(text)
+default = cop.hybrid.evidence_texts(store, rubric, table, granularity="construct")
+print(default.summary["n_short"], "of", default.summary["n_texts"], "are short at the default")
 ```
 
 <!-- output -->
@@ -128,9 +130,10 @@ for text_id, fallback, text in list(zip(evidence.ids, evidence.fallback, evidenc
 t003 ''
 Thank you for sending the draft.
 However, some parts are weak and need more work.
+19 of 54 are short at the default
 ```
 
-Text `t003` is rebuilt from its two verified passages. Eight texts have no verified passage in run 1 and keep their own text. `min_words=5` lowers the default of 40 because the toy texts are short. With the default, most toy texts would count as `short` and the coder would embed them whole.
+Text `t003` is rebuilt from its two verified passages. Eight texts have no verified passage in run 1 and keep their own text. `min_words=5` lowers the default of 40 because the toy texts are short. With the default, 19 of the 54 toy texts count as `short` and the coder embeds them whole.
 
 ### Step 3: score
 
@@ -205,7 +208,7 @@ Add `--granularity attribute` for the attribute level and `--run-number` to read
 ## What the output means
 
 - **The hybrid score is a similarity score of the evidence.** It ranks the texts by how close their extracted passages lie to the positive pole compared with the negative pole.
-- **A `no_evidence` fallback means the coder scored the whole text.** For those texts the hybrid score is a similarity score of the raw text, not of evidence. Read `fallback` before you interpret a low score.
+- **A `no_evidence` fallback means the coder scored the whole text.** For those texts the hybrid score is a similarity score of their own text, not of evidence. Read `fallback` before you interpret a low score.
 - **The score is only as good as the passages.** If the two-stage run extracts the wrong passages, the hybrid coder scores the wrong passages.
 
 ## Pitfalls
@@ -213,8 +216,8 @@ Add `--granularity attribute` for the attribute level and `--run-number` to read
 - **The default `min_words` is 40.** Short texts are then scored whole. Set `min_words` to the length below which your texts carry too little to rebuild.
 - **One run at a time.** `run_number` picks the run whose passages are used (default 1). The store may hold several runs; the hybrid coder does not combine them.
 - **The store must match the table and the rubric.** The coder checks the rubric hash, that every text of the table has a result in the run, and that every text is the one the store coded under its id: a text changed since the coding is refused. It checks all this before anything is embedded.
-- **A failed extraction is refused, not read as missing evidence.** A text whose extraction failed for an attribute in the run lacks that attribute's passages, so the coder refuses it before anything is embedded, unless the text is short and keeps its raw text anyway. Recode the failed cells with `cop.CodingSettings(retry_failed=True)` (`--retry-failed` on the command line), or score a table without those texts. The message names the first ten; `cop.export_scores(store)` lists all of them, as its rows of the run with status `extraction_failed`. A failed scoring leaves the passages in place, so such a text is scored as usual.
-- **Use the same encoder for the references.** As for the similarity coder, a mismatch of encoder or model commit is refused.
+- **A failed extraction is refused, not read as missing evidence.** A text whose extraction failed for an attribute in the run lacks that attribute's passages, so the coder refuses it before anything is embedded, unless the text is short and keeps its own text anyway. Recode the failed cells with `cop.CodingSettings(retry_failed=True)` (`--retry-failed` on the command line), or score a table without those texts. The message names the first ten; `cop.export_scores(store)` lists all of them, as its rows of the run with status `extraction_failed`. A failed scoring leaves the passages in place, so such a text is scored as usual.
+- **Use the same encoder for the references.** As for the similarity coder, a mismatch of encoder, model commit or major version of transformers is refused, and a smaller difference of the versions is scored with a warning that `result.provenance` records under `load_comparison`.
 - **The references must fit the rubric as it reads now.** The coder refuses references whose rubric hash differs from the rubric's, before it reads the store. After an edit of the rubric, regenerate the references, or build a hand-written set again with `ReferenceSet.for_rubric`.
 
 ## Next

@@ -47,7 +47,7 @@ print(summary.n_attribute_calls, dict(summary.status_counts))
 
 There are 324 attribute calls: 54 texts, 2 runs, 3 attributes. A status of `ok` means the attribute was scored from verified passages. `no_evidence` means no marker kept a verified passage, so the attribute gets the score 1 (see the [FAQ](faq.md)). Run the block again and the coder finds every cell in the store and makes no call.
 
-To use a real model, replace the backend. This is a snippet to read, not to run:
+To use a real model, replace the backend. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. This is a snippet to read, not to run:
 
 ```python
 backend = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY

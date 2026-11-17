@@ -40,9 +40,12 @@ def test_texts_and_references_that_differ_in_an_identity_key_are_refused(
     toy_rubric: Rubric, key: str
 ) -> None:
     texts = make_texts(texts_along_first_axis(3))
-    other = replace(texts, sidecar={**SIDECAR, key: CHANGED[key]})
-    with pytest.raises(ConfigurationError, match=f"different {key}|{key} \\("):
+    other = replace(texts, sidecar={**texts.sidecar, key: CHANGED[key]})
+    with pytest.raises(ConfigurationError, match=f"different {key}|{key} \\(") as refused:
         score_similarity(other, make_references(toy_rubric), toy_rubric, SimilaritySettings())
+    message = str(refused.value)
+    assert f"{key} ({CHANGED[key]!r} and {SIDECAR[key]!r})" in message
+    assert message.endswith("embed both sides with one encoder specification")
 
 
 def with_versions(
@@ -52,18 +55,28 @@ def with_versions(
     texts = make_texts(texts_along_first_axis(3))
     refs = make_references(toy_rubric)
     return (
-        replace(texts, sidecar={**SIDECAR, **texts_versions}),
+        replace(texts, sidecar={**texts.sidecar, **texts_versions}),
         replace(refs, sidecar={**refs.sidecar, **refs_versions}),
     )
 
 
-def test_versions_of_torch_and_transformers_do_not_block_scoring(toy_rubric: Rubric) -> None:
+@pytest.mark.parametrize(
+    ("texts_version", "references_version"),
+    [("4.57.6", "5.12.1"), ("5.0.0", "4.56.0"), ("4.57.0.dev0", "5.0.0rc1")],
+)
+def test_two_major_versions_of_transformers_are_refused_naming_both_and_the_remedy(
+    toy_rubric: Rubric, texts_version: str, references_version: str
+) -> None:
     texts, refs = with_versions(
         toy_rubric,
-        {"torch_version": "1.0", "transformers_version": "4.0", "resolved_revision": "a"},
-        {"torch_version": "2.0", "transformers_version": "5.0", "resolved_revision": "a"},
+        {"transformers_version": texts_version},
+        {"transformers_version": references_version},
     )
-    assert len(score_similarity(texts, refs, toy_rubric, SimilaritySettings())) > 0
+    with pytest.raises(ConfigurationError) as refused:
+        score_similarity(texts, refs, toy_rubric, SimilaritySettings())
+    message = str(refused.value)
+    assert f"transformers {texts_version} and {references_version}" in message
+    assert message.endswith("embed both sides in one environment")
 
 
 def test_texts_and_references_loaded_from_different_commits_are_refused_naming_both(

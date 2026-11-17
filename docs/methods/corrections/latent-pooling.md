@@ -78,7 +78,8 @@ The pooled and anchored factor is off by 0.6 points of the 1-to-5 scale on avera
 ## Where the library departs from the paper's analysis code
 
 - A factor score that is constant on the training rows is refused; the paper's analysis code skipped such a fold without a word.
-- When the correlation matrix is singular, the starting communality of each column is its largest absolute correlation with another column; the paper's analysis code put 1.0 on the diagonal for a constant column.
+- When the correlation matrix is singular, judged by its numerical rank, the starting communality of each column is its largest absolute correlation with another column. The paper's analysis code started from `1 - 1 / diag(R^-1)` whenever numpy's inverse returned without an error, as it does for many rank-deficient matrices, and from the largest absolute correlation only when the inversion failed; from the other start the iteration can stop at slightly different loadings.
+- A score column that standardises to exact zeros on the training rows starts at a communality of 0.001 in the library, the floor; rounding can leave a constant column at a value other than zero, and its starting communality can then differ. The paper's analysis code started a column of zeros at 1: it set that column's correlations and diagonal entry to 0, its inversion then failed, and its fallback took the largest absolute entry of the column's row of `R - I`. This could make the paper's factor fall on the constant column, so that its factor score was constant and the fold was skipped, where the library fits the fold from the other columns; the library can also end with a constant factor score and refuse the fit.
 
 ## Literature
 

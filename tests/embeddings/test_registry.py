@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import sys
 
 import pytest
+from ci_support import pyproject_text
 
 from copernicus.embeddings import DEFAULT_ENCODER, ENCODERS, EncoderSpec, resolve_encoder
 from copernicus.errors import SettingsError
@@ -160,6 +162,68 @@ def test_a_spec_with_unknown_options_or_no_room_for_text_is_refused() -> None:
         EncoderSpec("x", "org/x", "mean", 64, padding_side="middle")  # type: ignore[arg-type]
     with pytest.raises(SettingsError, match="no room"):
         EncoderSpec("x", "org/x", "mean", 2)
+
+
+def test_only_gte_qwen2_7b_needs_an_earlier_line_of_transformers() -> None:
+    bounds = {name: spec.transformers_below for name, spec in ENCODERS.items()}
+    assert bounds == {"minilm": None, "mpnet": None, "bge_m3": None, "gte_qwen2_7b": "5"}
+
+
+@pytest.mark.parametrize(
+    "bound", ["five", "", " 5", "5 ", "5.x", "v5", "5.", ".5", "5..1", "5.0rc1", 5, 5.0]
+)
+def test_a_transformers_bound_that_is_not_a_version_string_is_refused(bound: object) -> None:
+    with pytest.raises(SettingsError, match=r"'x'.*transformers_below.*release number"):
+        EncoderSpec("x", "org/x", "mean", 64, transformers_below=bound)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("bound", ["3", "4", "4.56", "4.56.0", "4.55.9"])
+def test_a_transformers_bound_that_no_version_of_the_embed_extra_lies_below_is_refused(
+    bound: str,
+) -> None:
+    with pytest.raises(SettingsError, match=r"transformers_below.*4\.56 or later"):
+        EncoderSpec("x", "org/x", "mean", 64, transformers_below=bound)
+
+
+@pytest.mark.parametrize("bound", ["5", "4.57", "4.56.1", "6.0.0", "12"])
+def test_a_release_number_above_the_minimum_is_a_transformers_bound(bound: str) -> None:
+    assert EncoderSpec("x", "org/x", "mean", 64, transformers_below=bound).transformers_below == (
+        bound
+    )
+
+
+def test_a_specification_without_a_transformers_bound_keeps_its_identity() -> None:
+    spec = EncoderSpec("x", "org/x", "mean", 64)
+    assert spec.transformers_below is None
+    assert "transformers_below" not in spec.identity()
+    assert "transformers_below" not in ENCODERS["gte_qwen2_7b"].identity()
+
+
+def test_the_minimum_of_a_transformers_bound_is_the_lower_bound_of_the_embed_extra() -> None:
+    from copernicus.embeddings.registry import TRANSFORMERS_MINIMUM
+
+    extra = re.search(r"^embed = \[(.*)\]$", pyproject_text(), re.MULTILINE)
+    assert extra is not None
+    bounds = re.findall(r'"transformers([<>=!~,.0-9]*)"', extra.group(1))
+    assert bounds == [">=4.56"]
+    assert ".".join(str(number) for number in TRANSFORMERS_MINIMUM) == "4.56"
+
+
+@pytest.mark.embed
+def test_transformers_5_no_longer_provides_rope_theta_on_the_qwen2_configuration() -> None:
+    from copernicus._versions import read_version
+
+    transformers = pytest.importorskip("transformers")
+    installed = read_version(transformers.__version__)
+    assert installed is not None, transformers.__version__
+    if installed.epoch == 0 and installed.release[0] < 5:
+        pytest.skip(
+            f"transformers {transformers.__version__} is of the 4 line, whose configuration "
+            "objects still provide rope_theta; the fact concerns transformers 5 and later"
+        )
+    configuration = transformers.Qwen2Config()
+    assert not hasattr(configuration, "rope_theta")
+    assert "rope_theta" in configuration.rope_parameters
 
 
 def test_importing_the_embeddings_package_does_not_import_torch_or_transformers() -> None:

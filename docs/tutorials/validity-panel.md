@@ -1,6 +1,6 @@
 # The validity panel
 
-The validity panel compares a machine score with a gold value. It answers two questions. How well does the score rank the texts? And how does the score go wrong: by a shift, by a compressed spread, by a link to text length, or by noise? This tutorial builds a panel for the toy corpus, reads the report, and shows the settings that change the answer.
+The validity panel compares a machine score with a gold value. It answers two questions. How well does the score rank the texts? And how does the score go wrong? For the second, the panel compares score and gold within their own observed ranges: whether the score sits higher or lower in its range than the gold sits in its range, whether it rises with the gold less or more than one for one, how the difference between the two follows the length of the text, and how the runs vary. This tutorial builds a panel for the toy corpus, reads the report, and shows the settings that change the answer.
 
 ## What you need
 
@@ -11,7 +11,7 @@ The validity panel compares a machine score with a gold value. It answers two qu
 
 The tutorial codes the toy corpus with the fake backend, so the scores are not those of a real model.
 
-To code with a real model instead of the fake backend, replace the backend line of the code below. This is a snippet to read, not to run:
+To code with a real model instead of the fake backend, replace the backend line of the code below. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. This is a snippet to read, not to run:
 
 ```python
 backend = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY
@@ -90,6 +90,8 @@ construct negative
 
 `direction="positive"` (the default) uses the score as given. `"negative"` negates it before every metric. `"auto"` negates when the signed Spearman correlation is negative, as for a score where low means good. The covariate for the covariate-linked error is `log(n_chars)` of the table; `PanelSettings(covariate="length_words", covariate_scale="raw")` uses a column of the gold frame or the table, per unit instead of per standard deviation. `n_boot` and `seed` set the bootstrap.
 
+Some gold values belong to a group of texts rather than to each text, for example a questionnaire answered by the person who wrote them. `PanelSettings(unit="group")` then compares one score per group with the group's value; a group's score is the mean over its texts that were scored for the target, and `n_used` and `n` count groups and `n_texts` the texts behind them. It needs the table's group column and refuses a group that holds a text scored for the target with a finite gold value and whose texts carry two gold values, scored or not; the [methods page](../methods/validity-panel.md#the-unit-of-the-comparison) gives the rules.
+
 ### Step 4: add a reliability ceiling
 
 Gold values are themselves measured with error, so no score can correlate perfectly with them. If you know the reliability of the gold, the panel reports the ceiling `sqrt(reliability)` on the rank validity and the share of the ceiling that the score reaches.
@@ -147,30 +149,31 @@ copernicus validity panel --store run.sqlite --texts toy_corpus.csv --gold toy_c
     --n-boot 200 --out panel.csv --report panel.txt
 ```
 
-Use `--scores similarity.csv` instead of `--store` for a similarity or hybrid table.
+Use `--scores similarity.csv` instead of `--store` for a similarity or hybrid table. Add `--unit group` to compare once per group of the group column.
 
 ## What the output means
 
 **Rank validity** is the absolute Spearman correlation of the score with the gold value. It asks only whether the score orders the texts as the gold does. The bracket is a 95 percent percentile interval from a bootstrap that resamples whole groups, so texts of one group are never split. Because rank validity is an absolute value, the bracket is bounded below by 0 and does not test zero validity: a score unrelated to the gold still gets a bracket above 0, and the report says so in a note under the table. To check for zero validity, read the interval of the signed Pearson correlation in `panel.frame` (`pearson_low`, `pearson_high`), which can contain 0.
 
-The four score errors describe how a score fails beyond ranking. Each one is computed after scaling the score and the gold value to the unit interval by their observed ranges. The report shows the point estimates. Because the score and the gold value are each scaled to their own range, a pure shift or stretch of the gold shows zero error on all four measures; the [methods page](../methods/validity-panel.md) explains what the errors then describe.
+The four score errors describe how a score fails beyond ranking. Each one is computed after scaling the score and the gold value to the unit interval by their observed ranges. The report shows the point estimates. Because the score and the gold value are each scaled to their own range, a score that is an exact increasing linear function of the gold shows zero level displacement, calibration shortfall and covariate-linked error; the [methods page](../methods/validity-panel.md) explains what the errors then describe.
 
 | Error | Column | Meaning |
 |-------|--------|---------|
 | Level displacement | `level_displacement` | The mean of score minus gold. Negative: the score sits below the gold on average. |
 | Calibration shortfall | `calibration_shortfall` | The covariance of score and gold over the variance of gold, minus 1. Negative: the score is compressed, so its spread is smaller than the gold's. Zero: score and gold rise together one for one. |
 | Covariate-linked error | `covariate_linked_error` | The slope of score minus gold on the covariate. Positive: the score rises relative to gold as the covariate (text length) rises. |
-| Noise | `noise` | The standard deviation of a text's score across runs, averaged over texts, on the 0-to-1 scale. It needs at least two runs. |
+| Noise | `noise` | The standard deviation of a text's score across runs, averaged over texts, on the 0-to-1 scale. Under `unit="group"` it is the standard deviation of each group's mean score across the runs that all its texts have, averaged over groups. It needs at least two runs. |
 
-`mae_01` is the mean absolute difference of the scaled score and gold. `share of ceiling` is the rank validity divided by the ceiling.
+`mae_01` is the mean absolute difference of the scaled score and gold. `share of ceiling` is the rank validity divided by the ceiling. `n_used` counts the texts compared, or the groups under `unit="group"`, and `n_texts` the texts behind them (the same number under `unit="text"`); `n_dropped_missing` counts texts under both units.
 
 ## Pitfalls
 
-- **The 0-to-1 scaling hides some shifts.** Each variable is scaled by its own observed range, so a score that is an exact linear function of the gold shows no level displacement and no calibration shortfall, even if it lives on another scale. The errors of the panel describe the shape of the relation, not the scale. To see the score on the gold scale, use the correction tools; the native-scale error of [the correction battery](correcting-scores.md) does.
+- **The 0-to-1 scaling hides some shifts.** Each variable is scaled by its own observed range, so a score that is an exact increasing linear function of the gold shows no level displacement and no calibration shortfall, even if it lives on another scale. A decreasing one shows a calibration shortfall of -2, unless `direction` reverses it first. The errors of the panel describe the shape of the relation, not the scale. To see the score on the gold scale, use the correction tools; the native-scale error of [the correction battery](correcting-scores.md) does.
 - **One run gives no noise.** The noise is missing with a single run, and it is zero when every run agrees.
 - **A reliability number is a claim about your gold.** Apply a single number to every target only when all gold columns come from one instrument. A wrong reliability moves the ceiling and the share of it.
 - **The gold must be numeric.** The panel refuses text and other types.
-- **Do not compare panels with different text sets.** Each target uses the texts that have a score, a gold value and a covariate. `n_used` tells you which.
+- **A person's value is not a value of each text.** When the gold value belongs to the person who wrote several texts, make the person the group column and compare once per person with `unit="group"`. Per text, a person with many texts counts many times.
+- **Do not compare panels with different text sets.** Each target uses the texts that have a score, a gold value and a covariate. `n_used` (texts, or groups under `unit="group"`) and `n_texts` tell you how many.
 - **Rank validity is a magnitude.** The sign is in `spearman`. A score with the wrong sign has the same rank validity as one with the right sign; use `direction` deliberately. Under the default direction the report adds a warning line for every target whose signed Spearman correlation is negative.
 
 ## Next

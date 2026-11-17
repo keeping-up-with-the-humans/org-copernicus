@@ -70,7 +70,9 @@ def test_the_pmm_variant_ships_with_its_note() -> None:
     from copernicus.corrections.families import imputation
 
     for text in (imputation.__doc__ or "", MultipleImputation.__doc__ or ""):
-        assert "predictive mean matching" in text and "removed" in text
+        flat = " ".join(text.split()).lower()
+        assert "predictive mean matching" in flat and "the paper's battery fitted" in flat
+        assert "removed" not in flat
 
 
 def test_integer_parameters_of_numpy_type_are_taken_as_integers() -> None:

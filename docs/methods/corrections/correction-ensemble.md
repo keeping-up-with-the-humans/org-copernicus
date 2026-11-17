@@ -107,6 +107,9 @@ The mean of the standardised members has a rank correlation of 0.8 with the gold
 ## Where the library departs from the paper's analysis code
 
 - In the battery the ensemble pools the entries fitted in each fold, so its members can change from fold to fold; the paper admitted only variants fitted on every fold.
+- The `factor` combiner starts its principal-axis iteration as latent pooling does, so for a singular correlation matrix of the members its start can differ from that of the paper's analysis code as the [latent pooling page](latent-pooling.md#where-the-library-departs-from-the-papers-analysis-code) says.
+- A member is dropped when its range over the requested ids is at most `1e-12` times the larger of 1 and its largest absolute value. Among members with finite values, the paper's analysis code dropped a member only when its computed standard deviation was exactly zero; rounding can give a constant member a tiny positive one, and the standardised member then became a column of 1s or of -1s, which shifted the mean combination.
+- The ensemble is rank-only, and no library function computes its error metrics. The paper's battery also reported error metrics of the ensemble, such as the change of its covariate-linked error and of its mean absolute error, computed by applying the combination fitted on the held-out texts to the drawn texts of each fold.
 
 ## Literature
 

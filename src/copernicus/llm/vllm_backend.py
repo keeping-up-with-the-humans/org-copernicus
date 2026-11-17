@@ -172,8 +172,9 @@ class VLLMBackend:
         except ImportError as error:
             raise BackendError(
                 "vLLM is not installed; install the vllm extra: "
-                'pip install "org-copernicus[vllm]", '
-                'or pip install ".[vllm]" from the package\'s root folder'
+                'pip install ".[vllm]" from the package\'s root folder, '
+                'or pip install "org-copernicus[vllm]" once a release has been uploaded to the '
+                "package index"
             ) from error
         engine_options = engine_options_json(engine_kwargs or {})
         self._sampling_params = vllm.SamplingParams

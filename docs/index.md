@@ -2,7 +2,7 @@
 
 copernicus codes constructs from text against a rubric. A rubric names a construct, splits it into attributes, and gives each attribute markers that a reader can look for in a text. The library scores your texts against the rubric, checks the scores against human gold values, and corrects the bias that remains when you use the scores in a mean, a group difference or a regression.
 
-It reproduces the configurations of the accompanying methods paper (under review) and ships the prompts of that paper.
+It offers the configurations of the accompanying methods paper (under review), with the departures from the paper's analysis code that the [methods pages](methods/index.md) list, and ships the prompts of that paper.
 
 ## What you can do with it
 

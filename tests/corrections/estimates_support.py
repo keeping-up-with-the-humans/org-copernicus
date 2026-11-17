@@ -1,4 +1,4 @@
-"""Synthetic data for the tests of the estimate-level estimators.
+"""Synthetic data for the tests of the estimate-level estimators, and how they compare pins.
 
 Every builder draws from the generator it is given in a fixed order, so a test that seeds the
 generator gets the same texts and the same labelled sample on every run.
@@ -10,6 +10,7 @@ from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from copernicus.corrections.data import CorrectionData
 
@@ -17,6 +18,24 @@ TRUE_MEAN = 1.0
 TRUE_DIFFERENCE = 0.0
 TRUE_SLOPE = 0.9
 CLASSICAL_SLOPE = 1.0
+# Platforms differ in the last digits of floating-point calculations, linear algebra among them,
+# so the tests of the corrections compare a value pinned with all its digits to twelve
+# significant digits.
+RELATIVE_TOLERANCE = 1e-12
+# A row of a repeated study as the tests pin it: (estimate_mean, coverage, se_mean, n_undefined).
+StudyRow = tuple[float, float, float, int]
+
+
+def same_study_row(found: StudyRow, pinned: StudyRow) -> bool:
+    """Tell whether a row of a repeated study equals its pin.
+
+    The point and the standard error are compared to twelve significant digits, the coverage (a
+    share of the draws) and the number of undefined draws exactly.
+    """
+    point, coverage, se, undefined = found
+    pinned_point, pinned_coverage, pinned_se, pinned_undefined = pinned
+    close = (point, se) == pytest.approx((pinned_point, pinned_se), rel=RELATIVE_TOLERANCE, abs=0.0)
+    return bool(close) and (coverage, undefined) == (pinned_coverage, pinned_undefined)
 
 
 def text_ids(n: int) -> list[str]:
@@ -169,9 +188,9 @@ def clustered_frame(
     """Texts in groups of the given sizes whose machine error is shared within a group.
 
     The gold value is ``1 + N(0, 1)`` for every text, so the true mean is 1 and the true difference
-    between two sets of groups fixed in advance is 0. The score adds ``shift``, an error
-    ``N(0, group_error^2)`` common to the texts of a group, and an error ``N(0, text_error^2)``
-    of each text. ``flag`` marks the groups with an even number.
+    between the groups with an even number and the other groups is 0. The score adds ``shift``,
+    an error ``N(0, group_error^2)`` common to the texts of a group, and an error
+    ``N(0, text_error^2)`` of each text. ``flag`` marks the groups with an even number.
     """
     counts = np.asarray(sizes, dtype=int)
     groups = np.repeat(np.arange(counts.size), counts)

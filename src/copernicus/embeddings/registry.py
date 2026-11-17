@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Literal
 
+from packaging.version import Version
+
 from copernicus._commits import COMMIT_HASH_LENGTH, is_commit_hash
+from copernicus._versions import is_below, is_release_number, read_version, release_text
 from copernicus.errors import SettingsError
 
 logger = logging.getLogger(__name__)
@@ -20,6 +23,8 @@ __all__ = [
     "ENCODERS",
     "POOLING_NAMES",
     "PADDING_SIDES",
+    "TRANSFORMERS_LIMITS",
+    "TRANSFORMERS_MINIMUM",
     "EncoderSpec",
     "resolve_encoder",
 ]
@@ -32,6 +37,11 @@ DEFAULT_SPECIAL_TOKENS_RESERVED = 2
 DEFAULT_ENCODER = "mpnet"
 """The name of the encoder that the commands and ``Encoder`` use when none is given."""
 UNPINNED = "unpinned"
+TRANSFORMERS_MINIMUM = (4, 56)
+"""The lowest release of transformers that the ``embed`` extra installs, ``transformers>=4.56``.
+
+A ``transformers_below`` must lie above it, so that some release the extra allows loads the
+encoder."""
 
 
 @dataclass(frozen=True)
@@ -68,6 +78,17 @@ class EncoderSpec:
             (``repo--module.Class``) loads that repository's default branch, so review such a
             configuration before allowing remote code. The registry pins ``gte_qwen2_7b`` to
             the commit ``a8d08b36ada9cacfe34c4d6f80957772a025daf2``.
+        transformers_below: The first version of the transformers package with which the
+            encoder's own model code, the code of its revision, does not load, as a release
+            number such as ``"5"`` for the 5 line; ``None`` for an encoder without such a
+            limit. When the encoder is asked to load, before anything is downloaded or
+            loaded, it compares the installed transformers with this version and stops
+            unless the installed one is below it. The version must lie above 4.56, the
+            lowest that the ``embed`` extra installs. It does not decide the vectors, so it
+            is not part of the identity. ``gte_qwen2_7b`` sets ``"5"``: the model code at
+            its pinned commit reads the configuration attribute ``rope_theta``, which
+            transformers 5 no longer provides on the configuration object (it moved into
+            ``rope_parameters``).
     """
 
     name: str
@@ -79,16 +100,18 @@ class EncoderSpec:
     padding_side: Literal["left", "right"] = "right"
     special_tokens_reserved: int = DEFAULT_SPECIAL_TOKENS_RESERVED
     revision: str | None = None
+    transformers_below: str | None = None
 
     def __post_init__(self) -> None:
         """Refuse a specification that cannot describe an encoder.
 
         Raises:
             SettingsError: If the pooling or padding side is unknown, the window leaves
-                no room for text after the reserved special tokens, or the model
+                no room for text after the reserved special tokens, the model
                 repository's own code may run (``trust_remote_code``) but the revision is
                 not a full 40-character commit hash (none, a blank value, a branch, a tag
-                or a shortened hash).
+                or a shortened hash), or ``transformers_below`` is not a release number
+                (decimal integers joined by dots) above 4.56.
         """
         if self.pooling not in POOLING_NAMES:
             raise SettingsError(
@@ -110,6 +133,25 @@ class EncoderSpec:
                 f"encoder {self.name!r} allows the model repository's own code to run "
                 "(trust_remote_code) but pins no commit: set revision to the "
                 f"{COMMIT_HASH_LENGTH}-character commit hash whose code you have reviewed"
+            )
+        if self.transformers_below is not None:
+            self._check_transformers_below(self.transformers_below)
+
+    def _check_transformers_below(self, below: object) -> None:
+        """Refuse a ``transformers_below`` that is no release number above the extra's minimum."""
+        bound = read_version(below) if is_release_number(below) else None
+        if bound is None:
+            raise SettingsError(
+                f"encoder {self.name!r}: transformers_below is {below!r}; give the first version "
+                "of transformers with which the encoder's own model code does not load as a "
+                "release number, decimal integers joined by dots, such as '5'"
+            )
+        minimum = release_text(TRANSFORMERS_MINIMUM)
+        if not is_below(Version(minimum), bound):
+            raise SettingsError(
+                f"encoder {self.name!r}: transformers_below is {below!r}, but the embed extra "
+                f"installs transformers {minimum} or later, so no release it allows would load "
+                f"the encoder; give a version above {minimum}"
             )
 
     def identity(self) -> dict[str, Any]:
@@ -146,13 +188,30 @@ ENCODERS: Mapping[str, EncoderSpec] = MappingProxyType(
             dtype="bfloat16",
             trust_remote_code=True,
             revision="a8d08b36ada9cacfe34c4d6f80957772a025daf2",
+            transformers_below="5",
         ),
     }
 )
 """The registered encoders by name, as read-only specifications.
 
 The names are ``minilm``, ``mpnet``, ``bge_m3`` and ``gte_qwen2_7b``. Only
-``gte_qwen2_7b`` runs the model repository's own code, and it is pinned to one commit.
+``gte_qwen2_7b`` runs the model repository's own code, and it is pinned to one commit, whose
+model code loads only with a transformers version below 5 (``transformers_below``).
+"""
+
+TRANSFORMERS_LIMITS: Mapping[tuple[str, str | None], str] = MappingProxyType(
+    {
+        (ENCODERS["gte_qwen2_7b"].hf_id, ENCODERS["gte_qwen2_7b"].revision): (
+            "its model code reads the configuration attribute rope_theta, which transformers 5 "
+            "no longer provides on the configuration object (it moved into rope_parameters)"
+        ),
+    }
+)
+"""Why the model code of a pinned commit does not load from its ``transformers_below`` on.
+
+Keyed by model id and revision, since the reason is a fact about the code of that commit; a
+loading encoder names it in its refusal. A specification whose model id and revision are not
+here is refused with the version of its ``transformers_below`` as the reason.
 """
 
 

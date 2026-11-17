@@ -9,6 +9,7 @@ from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
+from copernicus.coders.level_orders import LEVEL_ORDERS_MERGE, level_orders_reason
 from copernicus.coders.store_cells import listed_ids
 from copernicus.coders.store_layout import check_layout, count_rows, table_columns
 from copernicus.coders.store_schema import (
@@ -19,6 +20,7 @@ from copernicus.coders.store_schema import (
     quote,
     read_run_info,
 )
+from copernicus.coders.text_hash import COLLAPSED_CODING
 from copernicus.errors import ConfigurationError, StoreError
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,13 @@ TEXTS_DIFFER = (
     "the stores hold different texts under the same text ids: a store binds every text id to "
     "the text it was coded on, so codings of different texts cannot be merged"
 )
+# The stores hold text hashes, not texts, so the refusal names this cause as a possibility.
+COLLAPSED_STORES = (
+    "a text with a line break, a tab, a run of spaces or other whitespace between its words "
+    "also differs between a store coded by an earlier version of the library, which sent every "
+    "text with every run of whitespace collapsed to one space, and a store of this version: "
+    + COLLAPSED_CODING
+)
 # Timing, accounting, and provenance columns do not make two codings of a cell differ.
 NON_CODING_COLUMNS = (
     "created_at",
@@ -42,16 +51,21 @@ NON_CODING_COLUMNS = (
 
 
 def _check_agreement(reference: Mapping[str, str], other: Mapping[str, str], label: str) -> None:
-    """Raise unless two ``run_info`` mappings agree on every key but the library version."""
+    """Raise unless two ``run_info`` mappings agree on every key but the library version.
+
+    A refusal on the level orders of the one-stage prompt also says why the stores differ and
+    what to do.
+    """
     for key in sorted((set(reference) | set(other)) - {IGNORED_KEY}):
+        reason = level_orders_reason(key, LEVEL_ORDERS_MERGE)
         if key not in other:
-            raise StoreError(f"run_info missing {key} in {label}")
+            raise StoreError(f"run_info missing {key} in {label}{reason}")
         if key not in reference:
-            raise StoreError(f"run_info missing {key} in the reference store")
+            raise StoreError(f"run_info missing {key} in the reference store{reason}")
         if reference[key] != other[key]:
             raise StoreError(
                 f"run_info mismatch on {key}: stored {reference[key]}, requested {other[key]}"
-                f" (in {label})"
+                f" (in {label}){reason}"
             )
     if reference.get(IGNORED_KEY) != other.get(IGNORED_KEY):
         logger.warning(
@@ -118,7 +132,8 @@ def _check_texts(stores: Sequence[tuple[Path, _Store]]) -> None:
         noun = "text id" if len(conflicting) == 1 else "text ids"
         names = ", ".join(str(path) for path, _ in stores)
         raise StoreError(
-            f"{TEXTS_DIFFER} (stores {names}; {len(conflicting)} {noun}: {listed_ids(conflicting)})"
+            f"{TEXTS_DIFFER} (stores {names}; {len(conflicting)} {noun}: "
+            f"{listed_ids(conflicting)}); {COLLAPSED_STORES}"
         )
 
 
@@ -160,11 +175,16 @@ def merge_stores(sources: Sequence[str | Path], target: str | Path) -> dict[str,
         StoreError: If no source is given, a source does not exist, a store was made by
             an earlier version of the library or changed by hand, the target is one of the
             sources, two stores disagree on any ``run_info`` key except ``library_version``
-            (which is logged), the tables of two stores have different columns, or the
+            (which is logged; on ``level_orders`` the message says that the stores were coded
+            with one-stage prompts that list the levels in different orders), the tables of
+            two stores have different columns, or the
             sources and the target hold different text hashes under one text id (the first ten such
-            ids are named), found before anything is written or, when a store changed
-            after the first check, inside the transaction that copies a source, in which
-            case the sources copied before it stay in the target.
+            ids are named, and the message adds that a text with whitespace between its words
+            differs in this way between a store of an earlier version of the library, which
+            coded every text with its whitespace collapsed, and a store of this version), found
+            before anything is written or, when a store changed after the first check,
+            inside the transaction that copies a source, in which case the sources copied
+            before it stay in the target.
     """
     if isinstance(sources, str | Path):
         raise ConfigurationError(
@@ -306,8 +326,9 @@ def _check_copied_texts(connection: sqlite3.Connection) -> None:
         raise StoreError(
             f"{TEXTS_DIFFER} (source {paths['src']}, checked again against the target "
             f"{paths['main']} inside the transaction that copies it; {len(conflicting)} {noun}: "
-            f"{listed_ids(conflicting)}). The stores copied before this one stay in the target, "
-            "each complete, and merging them again changes nothing, as a merge is idempotent."
+            f"{listed_ids(conflicting)}); {COLLAPSED_STORES}. The stores copied before this one "
+            "stay in the target, each complete, and merging them again changes nothing, as a "
+            "merge is idempotent."
         )
 
 

@@ -333,7 +333,16 @@ def test_predict_names_a_score_column_the_data_lack() -> None:
 
 @pytest.mark.parametrize(
     ("version", "keyword"),
-    [("1.3.2", "n_alphas"), ("1.6.1", "n_alphas"), ("1.7.0", "alphas"), ("1.10.dev0", "alphas")],
+    [
+        ("1.3.2", "n_alphas"),
+        ("1.4.2", "n_alphas"),
+        ("1.5.0", "n_alphas"),
+        ("1.5.0+local", "n_alphas"),
+        ("1.6.1", "n_alphas"),
+        ("1.7.0", "alphas"),
+        ("1.9.0rc1", "alphas"),
+        ("1.10.dev0", "alphas"),
+    ],
 )
 def test_the_number_of_penalties_is_passed_under_the_keyword_of_the_installed_version(
     version: str, keyword: str, monkeypatch: pytest.MonkeyPatch
@@ -349,4 +358,36 @@ def test_an_unreadable_scikit_learn_version_is_refused(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(sklearn, "__version__", "unknown")
     with pytest.raises(ConfigurationError, match="scikit-learn version"):
+        _alpha_count_keyword()
+
+
+@pytest.mark.parametrize(
+    ("version", "keyword"),
+    [
+        ("v1.5.0", "n_alphas"),
+        (" 1.6.1 ", "n_alphas"),
+        ("1!1.5.0", "n_alphas"),
+        ("1", "n_alphas"),
+        ("2", "alphas"),
+    ],
+)
+def test_the_scikit_learn_version_is_read_whole_by_the_package_parser(
+    version: str, keyword: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sklearn
+
+    monkeypatch.setattr(sklearn, "__version__", version)
+    assert _alpha_count_keyword() == keyword
+
+
+@pytest.mark.parametrize("version", ["1.5abc", "1.5.0 rc1"])
+def test_a_scikit_learn_version_that_the_package_parser_cannot_read_is_refused(
+    version: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sklearn
+
+    monkeypatch.setattr(sklearn, "__version__", version)
+    with pytest.raises(
+        ConfigurationError, match=f"cannot read the scikit-learn version {version!r}"
+    ):
         _alpha_count_keyword()

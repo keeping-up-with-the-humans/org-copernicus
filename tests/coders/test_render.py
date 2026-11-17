@@ -186,9 +186,9 @@ def test_section_builders_follow_the_order(toy_rubric: Rubric) -> None:
     assert levels[6] == f"{attr.markers[2].name}:"
     subs = subrubrics_section(attr, order).splitlines()
     marker = attr.markers[1]
-    expected = {lv.level: lv.description for lv in reversed(marker.levels)}
+    expected = {lv.level: lv.description for lv in marker.levels}
     assert subs[0] == f"{marker.name}: {expected}"
-    assert subs[0].startswith(f"{marker.name}: {{5: '")
+    assert subs[0].startswith(f"{marker.name}: {{1: '")
 
 
 def test_definitions_section_keeps_rubric_order(toy_rubric: Rubric) -> None:

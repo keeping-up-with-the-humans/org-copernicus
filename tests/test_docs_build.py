@@ -225,8 +225,10 @@ def test_mkdocs_builds_strict(tmp_path: Path) -> None:
         missing = {exported for exported in module.__all__ if exported not in anchors}
         assert missing == KNOWN_UNDOCUMENTED.get(name, set()), name
     changelog = (site / "changelog" / "index.html").read_text(encoding="utf-8")
-    assert "0.1.0" in changelog
-    assert CHANGELOG.read_text(encoding="utf-8").splitlines()[2] == "## 0.1.0"
+    assert copernicus.__version__ in changelog and "0.1.0" in changelog
+    newest = CHANGELOG.read_text(encoding="utf-8").splitlines()[2]
+    version = copernicus.__version__
+    assert newest in (f"## {version}", f"## {version} (not yet released)")
 
 
 def test_api_pages_exist_for_every_subpackage_and_the_index_names_every_top_level_name() -> None:

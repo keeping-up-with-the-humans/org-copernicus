@@ -1,8 +1,8 @@
 # References
 
-The methods pages cite the works below. The entries are copied, unchanged, from the reference list of the accompanying methods paper (under review), in its alphabetical order. Each page names the works it rests on in its own Literature section.
+The methods pages cite the works below, in alphabetical order. Each page names the works it rests on in its own Literature section.
 
-Angelopoulos AN, Bates S, Fannjiang C, Jordan MI, Zrnic T (2023a) Prediction-powered inference. *Science* 382(6671):669--674.
+Angelopoulos AN, Bates S, Fannjiang C, Jordan MI, Zrnic T (2023) Prediction-powered inference. *Science* 382(6671):669--674.
 
 Angelopoulos AN, Duchi JC, Zrnic T (2026) PPI++: Efficient prediction-powered inference. *The Annals of Applied Statistics* 20(3):2235--2252.
 
@@ -16,7 +16,7 @@ Bross I (1954) Misclassification in 2 × 2 tables. *Biometrics* 10(4):478--486.
 
 Campbell DT, Fiske DW (1959) Convergent and discriminant validation by the multitrait-multimethod matrix. *Psychological Bulletin* 56(2):81--105.
 
-Carlson NA, Burbano VC (2026) The use of LLMs to annotate data in management research: Foundational guidelines and warnings. *Strategic Management Journal* 47(3):699--725.
+Carlson NA, Burbano V (2026) The use of LLMs to annotate data in management research: Foundational guidelines and warnings. *Strategic Management Journal* 47(3):699--725.
 
 Carmines EG, Zeller RA (1979) *Reliability and Validity Assessment* (Sage, Beverly Hills, CA).
 
@@ -44,7 +44,7 @@ Gilardi F, Alizadeh M, Kubli M (2023) ChatGPT outperforms crowd workers for text
 
 Gillen B, Snowberg E, Yariv L (2019) Experimenting with measurement error: Techniques with applications to the Caltech cohort study. *Journal of Political Economy* 127(4):1826--1863.
 
-Hashemi H, Eisner J, Rosset C, Van Durme B, Kedzie C (2024) LLM-Rubric: A multidimensional, calibrated approach to automated evaluation of natural language texts. Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), 13806--13834.
+Hashemi H, Eisner J, Rosset C, Van Durme B, Kedzie C (2024) LLM-Rubric: A multidimensional, calibrated approach to automated evaluation of natural language texts. Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) (Association for Computational Linguistics, Bangkok), 13806--13834.
 
 Hausman J (2001) Mismeasured variables in econometric analysis: Problems from the right and problems from the left. *Journal of Economic Perspectives* 15(4):57--67.
 
@@ -62,7 +62,7 @@ Loken E, Gelman A (2017) Measurement error and the replication crisis. *Science*
 
 Lombard M, Snyder-Duch J, Bracken CC (2002) Content analysis in mass communication: Assessment and reporting of intercoder reliability. Human Communication Research 28(4):587--604.
 
-Ludwig J, Mullainathan S, Rambachan A (2026) Large language models: An applied econometric framework. *Annual Review of Economics* 18(1):283--316.
+Ludwig J, Mullainathan S, Rambachan A (2026) Large language models: An applied econometric framework. *Annual Review of Economics* 18:283--316.
 
 Messick S (1995) Validity of psychological assessment: Validation of inferences from persons' responses and performances as scientific inquiry into score meaning. *American Psychologist* 50(9):741--749.
 
@@ -74,7 +74,7 @@ Mullainathan S, Spiess J (2017) Machine learning: An applied econometric approac
 
 Neyman J (1938) Contribution to the theory of sampling human populations. *Journal of the American Statistical Association* 33(201):101--116.
 
-Platt JC (2000) Probabilistic outputs for support vector machines and comparisons to regularized likelihood methods. Smola AJ, Bartlett P, Schölkopf B, Schuurmans D, eds. *Advances in Large-Margin Classifiers* (MIT Press, Cambridge, MA), 61--74.
+Platt JC (2000) Probabilities for SV machines. Smola AJ, Bartlett P, Schölkopf B, Schuurmans D, eds. *Advances in Large-Margin Classifiers* (MIT Press, Cambridge, MA), 61--74.
 
 Prentice RL (1982) Covariate measurement errors and parameter estimation in a failure time regression model. *Biometrika* 69(2):331--342.
 

@@ -1,4 +1,4 @@
-"""Checks of the inputs that the estimate-level estimators share.
+"""Checks of the inputs that the estimate-level estimators share, and the long-short grouping.
 
 Every estimator reads its columns through these helpers, so the refusals read the same
 everywhere: an unknown or non-numeric column, a prediction or grouping that does not cover every
@@ -24,9 +24,11 @@ __all__ = [
     "complete_column",
     "equal_probability_sample",
     "group_mask",
+    "long_short_split",
     "outcome_values",
     "prediction_values",
     "require_labelled",
+    "require_labelled_sides",
     "score_values",
 ]
 
@@ -168,21 +170,60 @@ def group_mask(data: CorrectionData, group: pd.Series | np.ndarray) -> np.ndarra
     return mask
 
 
-def require_labelled(count: int, minimum: int, method: str, where: str = "") -> None:
+def long_short_split(data: CorrectionData) -> np.ndarray:
+    """The long side of the long-short difference: the texts at or above the covariate's median.
+
+    With the default covariate (the log of the character count) the mask marks the longer
+    texts, against the texts below the median; a text at the median counts as long, as in the
+    paper's analysis code. Ties at the median can therefore make the two sides unequal, and a
+    constant covariate puts every text on the long side and leaves the short side empty. The
+    mask is returned as it is; an estimator of a difference refuses a side with too few texts
+    (``group_difference_ppi`` needs two labelled texts on each side, ``repeated_study`` two
+    texts).
+
+    Args:
+        data: The correction data.
+
+    Returns:
+        A boolean array in data order, True on the long side.
+    """
+    covariate = data.covariate
+    return np.asarray(covariate >= np.median(covariate), dtype=bool)
+
+
+def require_labelled(count: int, minimum: int, method: str) -> None:
     """Refuse an estimate that has fewer labelled rows than it needs.
 
     Args:
         count: The number of labelled rows available.
         minimum: The number needed.
         method: The estimator, for the message.
-        where: Where the rows are counted, such as ``" in each group"``.
 
     Raises:
         EstimatorError: If ``count`` is below ``minimum``.
     """
     if count < minimum:
+        raise EstimatorError(f"{method} needs at least {minimum} labelled rows; there are {count}")
+
+
+def require_labelled_sides(counts: tuple[int, int], minimum: int, method: str) -> None:
+    """Refuse a difference that has fewer labelled rows than it needs on a side of its grouping.
+
+    Args:
+        counts: The labelled rows where the grouping is True and where it is False.
+        minimum: The number needed on each side.
+        method: The estimator, for the message.
+
+    Raises:
+        EstimatorError: If a side holds fewer than ``minimum`` labelled rows; the message gives
+            the smaller count and what to do.
+    """
+    count = min(counts)
+    if count < minimum:
         raise EstimatorError(
-            f"{method} needs at least {minimum} labelled rows{where}; there are {count}"
+            f"{method} needs at least {minimum} labelled rows on each side; there are {count} on "
+            f"one side: label more texts on that side, or use a grouping that puts at least "
+            f"{minimum} labelled texts on each side"
         )
 
 

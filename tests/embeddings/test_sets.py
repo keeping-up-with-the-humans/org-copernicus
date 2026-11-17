@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -19,6 +20,12 @@ from copernicus.errors import ConfigurationError
 
 ARRAYS = ("ids", "vectors", "chunk_vectors", "chunk_owner", "chunk_weight")
 DIGEST = re.compile("[0-9a-f]{64}")
+# What an encoder records of the texts it embedded: their form and the digest of them.
+TEXT_RECORD = {"text_form": "as_given", "texts_hash": "ab" * 32}
+RESTORE_OR_EMBED_AGAIN = (
+    "restore the description that was saved with the set, or embed the texts again "
+    "(Encoder.embed, or copernicus embed texts)"
+)
 
 
 def arrays_of(embedded: EmbeddingSet) -> dict[str, np.ndarray]:
@@ -340,8 +347,6 @@ def test_a_saved_subset_loads_with_the_digest_of_its_own_arrays(tmp_path: Path) 
 def test_save_records_the_digest_of_the_arrays_it_writes_not_the_one_it_read(
     tmp_path: Path,
 ) -> None:
-    from dataclasses import replace
-
     small_set().save(tmp_path / "s")
     loaded = EmbeddingSet.load(tmp_path / "s")
     flipped = replace(loaded, vectors=-loaded.vectors)
@@ -351,3 +356,39 @@ def test_save_records_the_digest_of_the_arrays_it_writes_not_the_one_it_read(
     assert np.array_equal(again.vectors, -small_set().vectors)
     digest = arrays_hash(arrays_of(flipped))
     assert sidecar_of(tmp_path / "s")["arrays_hash"] == digest == again.sidecar["arrays_hash"]
+
+
+def test_the_description_keeps_the_text_form_and_the_texts_hash_of_the_sidecar(
+    tmp_path: Path,
+) -> None:
+    replace(small_set(), sidecar={**TOY_IDENTITY, **TOY_VERSIONS, **TEXT_RECORD}).save(
+        tmp_path / "s"
+    )
+    description = sidecar_of(tmp_path / "s")
+    assert {key: description[key] for key in TEXT_RECORD} == TEXT_RECORD
+    loaded = EmbeddingSet.load(tmp_path / "s")
+    assert {key: loaded.sidecar[key] for key in TEXT_RECORD} == TEXT_RECORD
+
+
+def test_a_description_without_a_text_form_or_a_texts_hash_loads_as_before(tmp_path: Path) -> None:
+    small_set().save(tmp_path / "s")
+    assert not set(TEXT_RECORD) & sidecar_of(tmp_path / "s").keys()
+    loaded = EmbeddingSet.load(tmp_path / "s")
+    assert not set(TEXT_RECORD) & set(loaded.sidecar) and len(loaded) == 3
+
+
+def test_a_subset_keeps_the_text_form_and_leaves_out_the_texts_hash() -> None:
+    whole = replace(small_set(), sidecar={**TOY_IDENTITY, **TEXT_RECORD})
+    picked = whole.subset(["t2", "t1"])
+    assert picked.sidecar["text_form"] == "as_given" and "texts_hash" not in picked.sidecar
+
+
+@pytest.mark.parametrize("value", ["abc", 7, "AB" * 32])
+def test_a_malformed_texts_hash_is_refused_naming_the_key(tmp_path: Path, value: object) -> None:
+    small_set().save(tmp_path / "s")
+    description = sidecar_of(tmp_path / "s")
+    (tmp_path / "s.json").write_text(json.dumps({**description, "texts_hash": value}))
+    with pytest.raises(ConfigurationError, match=r"s\.json: texts_hash must be") as refused:
+        EmbeddingSet.load(tmp_path / "s")
+    assert repr(value) in str(refused.value)
+    assert str(refused.value).endswith(f"; {RESTORE_OR_EMBED_AGAIN}")

@@ -63,10 +63,17 @@ def test_the_clustered_standard_error_follows_the_sandwich() -> None:
     assert fit.se == pytest.approx(np.sqrt(covariance[2, 2]), abs=1e-12)
 
 
-def test_a_constant_measurement_leaves_the_system_singular() -> None:
-    y = np.linspace(0.0, 1.0, 50)
-    with pytest.raises(EstimatorError, match="singular"):
-        stacked_2sls(y, np.linspace(1.0, 2.0, 50), np.ones(50))
+def test_a_rank_deficient_stacked_system_is_refused_with_its_rank_and_both_causes() -> None:
+    y, varying = np.linspace(0.0, 1.0, 50), np.linspace(1.0, 2.0, 50)
+    with pytest.raises(EstimatorError, match="rank 3 of 4") as constant:
+        stacked_2sls(y, varying, np.ones(50))
+    enormous_proxy = np.random.default_rng(7).normal(size=50) / 1e-17
+    with pytest.raises(EstimatorError, match="rank 1 of 4") as enormous:
+        stacked_2sls(y, enormous_proxy, varying)
+    for refusal in (constant, enormous):
+        message = str(refusal.value)
+        assert "rank-deficient" in message and "does not vary" in message
+        assert "orders of magnitude" in message and "rescale" in message
 
 
 def test_oriv_recovers_the_slope_from_two_independent_measurements() -> None:

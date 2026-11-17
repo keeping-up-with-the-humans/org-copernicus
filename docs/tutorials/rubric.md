@@ -47,7 +47,7 @@ spec_examples | Concrete examples
 Clearly low | Every main point is illustrated with a precise, identifiable example from the work.
 ```
 
-`load_rubric` reads the JSON file, checks it against the schema and the naming rules, and returns an immutable `Rubric`. The rubric has a content hash. A run store records it, so a store refuses to continue with a changed rubric.
+`load_rubric` reads the JSON file, checks it against the schema and the naming rules, and returns an immutable `Rubric`. The rubric has a content hash. A run store records it, so a store refuses to continue with a rubric whose content changed.
 
 <!-- run -->
 ```python
@@ -175,11 +175,11 @@ It prints `valid: politeness_v1 (1 attributes, 2 markers)` when the file passes.
 
 - **A rubric that loads is a rubric every coder can use.** The loader checks the layout (every required field present, every marker with five levels) and the names.
 - **The naming rules exist because ids become column names and target names.** An attribute or marker id matches `[A-Za-z_][A-Za-z0-9_]*`, differs from the names the run store and the exports use for their own columns (for example `text_id` or `construct_score`), is not `construct` and does not end in `__rollup` (the names of the whole-construct target and of the roll-up `<rubric_id>__rollup`), and differs from every other id, all when case is ignored. A marker name is unique within its attribute and differs from the ids of the attribute's other markers. A rubric built in code, or changed with `dataclasses.replace`, checks its marker names and its ids against the same rules when it is constructed and refuses with the same messages.
-- **The content hash changes when any part of the rubric changes.** Reordering the glossary changes it too, because the prompts list the glossary in order.
+- **The content hash changes when any part of the rubric changes.** Reordering the glossary changes it too, because the prompts list the glossary in order. The one exception is the order in which a marker lists its five levels: the one-stage prompt lists them in that order, but the hash does not see it, so every rubric keeps the hash that version 0.1.0 computed for it. A one-stage run store records the order instead, when some marker does not list its levels from 5 down to 1.
 
 ## Pitfalls
 
-- **Edit a rubric after coding and the store refuses to continue.** The run store records the rubric hash. Code with the final rubric, or start a new store.
+- **Edit the content of a rubric after coding and the store refuses to continue.** The run store records the rubric hash. Code with the final rubric, or start a new store.
 - **Write levels that a reader can tell apart.** The scoring stage picks the level whose description fits the verified passages best. Levels that differ only in an adverb give noisy scores.
 - **Describe markers as features of the text.** A marker such as "the feedback is good" cannot be pointed to. A marker such as "the feedback names the exact part of the work" can.
 - **Keep the glossary short.** Every term in `definitions` enters the prompts of every call.

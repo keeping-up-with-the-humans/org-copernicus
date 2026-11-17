@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import copernicus._digests as digests
 from copernicus._digests import ARRAYS_HASH_KEY, TABLE_HASH_KEY, arrays_hash, table_hash
 from copernicus.errors import ConfigurationError
 
@@ -77,6 +78,18 @@ def test_the_arrays_hash_is_the_digest_of_the_documented_bytes() -> None:
     vectors = struct.pack("<2f", 1.0, 2.0)
     expected = sha256(b"ids\0<U2\0" + b"2\0" + ids + b"vectors\0<f4\0" + b"1,2\0" + vectors)
     assert arrays_hash(arrays) == expected
+
+
+def test_the_texts_hash_is_the_digest_of_the_documented_text() -> None:
+    texts = ["First line.\nSecond  line.", "zwölf", ""]
+    per_text = "".join(sha256(text.encode("utf-8")) for text in texts)
+    assert digests.texts_hash(texts) == sha256(per_text.encode("ascii"))
+    assert digests.texts_hash([]) == sha256(b"")
+    assert digests.texts_hash(["ab", "c"]) != digests.texts_hash(["a", "bc"])
+    assert digests.texts_hash(["a", "b"]) != digests.texts_hash(["b", "a"])
+    assert digests.texts_hash(["a b"]) != digests.texts_hash(["a  b"])
+    keys = (digests.TEXT_FORM_KEY, digests.TEXTS_HASH_KEY, digests.TEXT_FORM_AS_GIVEN)
+    assert keys == ("text_form", "texts_hash", "as_given")
 
 
 def test_the_arrays_hash_follows_the_names_the_dtype_and_the_shape_but_not_the_layout() -> None:

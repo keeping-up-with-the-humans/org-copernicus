@@ -6,115 +6,25 @@ import json
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import pandas as pd
 import pytest
 from embeddings_support import needs_minilm
+from reference_support import (
+    STUB_VERSIONS,
+    StubEncoder,
+    drop_rows,
+    stub_embeddings,
+    toy_reference_set,
+)
 
 from copernicus import __version__
-from copernicus.embeddings import EmbeddingSet, Encoder, EncoderSpec
+from copernicus.embeddings import Encoder
 from copernicus.errors import ConfigurationError
-from copernicus.references import GeneratorSettings, ReferenceSet, build_cells
-from copernicus.references.reference_set import FRAME_COLUMNS
+from copernicus.references import GeneratorSettings, ReferenceSet
 from copernicus.rubric.model import Rubric
 from copernicus.similarity import ReferenceEmbeddings, embed_references
-
-TEXTS_PER_CELL = 2
-STUB_VERSIONS = {
-    "resolved_revision": "abc123def",
-    "torch_version": "9.9.9",
-    "transformers_version": "8.8.8",
-}
-
-
-def toy_reference_set(rubric: Rubric, writers: tuple[str, ...] = ("writer-a",)) -> ReferenceSet:
-    """Build a reference set by hand: two texts per cell and writer, nothing screened out."""
-    rows: list[dict[str, Any]] = []
-    for writer in writers:
-        for cell in build_cells(rubric):
-            for number in range(TEXTS_PER_CELL):
-                rows.append(
-                    {
-                        "rubric_id": rubric.rubric_id,
-                        "target": cell.target,
-                        "polarity": cell.polarity,
-                        "level": cell.level,
-                        "style": "neutral",
-                        "writer_model": writer,
-                        "text": (
-                            f"A {cell.polarity} note about {cell.target} at the {cell.level} "
-                            f"level, number {number}, from {writer}."
-                        ),
-                        "call_index": number,
-                        "attempt": 0,
-                        "seed": 42 + number,
-                        "prompt_tokens": 100.0,
-                        "completion_tokens": 50.0,
-                        "temperature_applied": 0.9,
-                        "top_p_applied": None,
-                        "prompt_hash": "hash",
-                        "prompt_version": "v1",
-                        "screened_out": False,
-                        "screen_reason": "",
-                    }
-                )
-    frame = pd.DataFrame(rows, columns=list(FRAME_COLUMNS))
-    return ReferenceSet.for_rubric(frame, rubric, GeneratorSettings())
-
-
-class StubEncoder:
-    """An encoder stand-in: gives each text the given number of chunks of random vectors."""
-
-    def __init__(self, chunks_per_text: list[int], dimension: int = 5) -> None:
-        self.spec = EncoderSpec("stub", "org/stub", "mean", 8, revision="abc123")
-        self.chunks_per_text = chunks_per_text
-        self.dimension = dimension
-        self.seen: tuple[list[str], list[Any]] | None = None
-
-    def embed(self, texts: list[str], ids: list[Any]) -> EmbeddingSet:
-        self.seen = (list(texts), list(ids))
-        generator = np.random.default_rng(11)
-        owner = np.repeat(np.arange(len(texts)), self.chunks_per_text).astype(np.int64)
-        chunks = generator.normal(size=(len(owner), self.dimension))
-        chunks /= np.linalg.norm(chunks, axis=1, keepdims=True)
-        sums = np.zeros((len(texts), self.dimension))
-        np.add.at(sums, owner, chunks)
-        sums /= np.linalg.norm(sums, axis=1, keepdims=True)
-        return EmbeddingSet(
-            ids=np.asarray([str(text_id) for text_id in ids]),
-            vectors=sums.astype(np.float32),
-            chunk_vectors=chunks.astype(np.float32),
-            chunk_owner=owner,
-            chunk_weight=np.ones(len(owner)),
-            encoder=self.spec.name,
-            metadata=None,
-            sidecar={**self.spec.identity(), **STUB_VERSIONS},
-        )
-
-
-def stub_embeddings(
-    rubric: Rubric, writers: tuple[str, ...] = ("writer-a",)
-) -> ReferenceEmbeddings:
-    """Embed the hand-built reference set with the stub encoder, one chunk per text."""
-    refset = toy_reference_set(rubric, writers)
-    encoder: Any = StubEncoder([1] * len(refset.kept()))
-    return embed_references(refset, encoder)
-
-
-def drop_rows(refs: ReferenceEmbeddings, mask: np.ndarray) -> ReferenceEmbeddings:
-    """Return the reference embeddings without the rows where ``mask`` is true."""
-    keep = ~mask
-    return replace(
-        refs,
-        vectors=refs.vectors[keep],
-        target=refs.target[keep],
-        polarity=refs.polarity[keep],
-        level=refs.level[keep],
-        style=refs.style[keep],
-        writer_model=refs.writer_model[keep],
-    )
 
 
 @needs_minilm
@@ -163,6 +73,34 @@ def test_the_frame_order_and_positional_ids_are_used(toy_rubric: Rubric) -> None
     assert refs.sidecar["prompt_versions"] == ["v1"] and refs.sidecar["hf_id"] == "org/stub"
     assert refs.sidecar["rubric_id"] == toy_rubric.rubric_id and refs.sidecar["n_references"] == 47
     assert refs.sidecar["rubric_hash"] == toy_rubric.content_hash() == refs.rubric_hash
+
+
+# Reference texts as a writer model may return them: whitespace inside, at the ends, or both.
+REFERENCE_TEXTS = [
+    pytest.param("  pole text \n", id="padded"),
+    pytest.param("First line.\nSecond line.", id="line_break"),
+    pytest.param("A tab\tsits in this reference.", id="tab"),
+    pytest.param("Two  spaces sit in this reference.", id="spaces"),
+    pytest.param("A no-break space sits here.", id="no_break_space"),
+    pytest.param("  First\nline  has\ta space.  ", id="mixed_and_padded"),
+    pytest.param("\t\nA line.\r\n\nAnother  one,\tpadded. \n ", id="breaks_and_padding"),
+]
+
+
+@pytest.mark.parametrize("given", REFERENCE_TEXTS)
+def test_each_reference_text_is_stripped_at_its_ends_and_the_set_is_kept(
+    toy_rubric: Rubric, given: str
+) -> None:
+    frame = toy_reference_set(toy_rubric).frame.copy()
+    frame.loc[frame.index[0], "text"] = given
+    refset = ReferenceSet.for_rubric(frame, toy_rubric, GeneratorSettings())
+    stored = refset.frame.copy()
+    encoder = StubEncoder([1] * len(refset.kept()))
+    embed_references(refset, encoder)  # type: ignore[arg-type]
+    assert encoder.seen is not None
+    assert encoder.seen[0] == [given.strip(), *list(stored["text"])[1:]]
+    assert refset.frame["text"].iloc[0] == given
+    pd.testing.assert_frame_equal(refset.frame, stored)
 
 
 def test_an_empty_kept_frame_is_refused(toy_rubric: Rubric) -> None:

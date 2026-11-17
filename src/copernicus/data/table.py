@@ -14,7 +14,7 @@ from copernicus.errors import TextTableError
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["GUARANTEED_COLUMNS", "TextTable"]
+__all__ = ["GUARANTEED_COLUMNS", "TextTable", "collapse_whitespace"]
 
 GUARANTEED_COLUMNS = ("text_id", "text", "group_id", "n_chars", "n_words")
 DERIVED_COLUMNS = ("n_chars", "n_words")
@@ -30,9 +30,23 @@ NO_GROUP_WARNING = (
 )
 
 
-def _normalise(value: str) -> str:
-    """Collapse every whitespace run to one space and strip the ends."""
-    return " ".join(value.split())
+def collapse_whitespace(text: str) -> str:
+    """Collapse every run of whitespace to one space and strip both ends.
+
+    Whitespace is every character that ``str.split`` splits at: spaces, line breaks, tabs,
+    carriage returns, no-break spaces and the other Unicode spaces. The rule describes a text
+    by its words: ``n_chars`` and ``n_words`` of a `TextTable` count the collapsed text, and
+    the two-stage coder keeps a passage in this form. An earlier version of the library also
+    sent and hashed every text in this form; coding the collapsed texts continues a store
+    written by that version.
+
+    Args:
+        text: Any string.
+
+    Returns:
+        The words of the text joined by single spaces, ``" ".join(text.split())``.
+    """
+    return " ".join(text.split())
 
 
 def _listed(values: list[Any]) -> str:
@@ -44,7 +58,7 @@ def _listed(values: list[Any]) -> str:
 
 @dataclass(frozen=True, eq=False)
 class TextTable:
-    """One row per text, with validated identifiers and normalised text.
+    """One row per text, with validated identifiers and the text as given, its ends stripped.
 
     The wrapped frame is read-only by convention; every method returns a new
     object. The first five columns are ``text_id``, ``text``, ``group_id``,
@@ -78,10 +92,12 @@ class TextTable:
     ) -> TextTable:
         """Validate a data frame and build a text table from it.
 
-        The text is normalised with ``" ".join(text.split())``; ``n_chars`` and
-        ``n_words`` describe the normalised text. A frame that already carries
-        ``n_chars`` and ``n_words`` (for example a table's own frame written to a
-        file) has them recomputed, and when no ``group_id`` argument is given but
+        Each text is kept as given with only its ends stripped (``text.strip()``), so its
+        line breaks, tabs and runs of spaces reach the coders and the encoders; a text that
+        is empty after stripping is refused. ``n_chars`` and ``n_words`` describe the text
+        with every run of whitespace collapsed to one space (`collapse_whitespace`). A frame
+        that already carries ``n_chars`` and ``n_words`` (for example a table's own frame
+        written to a file) has them recomputed, and when no ``group_id`` argument is given but
         the frame has a ``group_id`` column, that column is used as the grouping.
         Without either, every text becomes its own group and a warning says what that
         means: a human sample draws the texts independently, and the bootstrap intervals of
@@ -140,14 +156,15 @@ class TextTable:
         if problems:
             raise TextTableError("invalid text table: " + "; ".join(problems))
 
-        normalised = texts.map(_normalise)
+        kept = texts.map(lambda value: value.strip())
+        collapsed = kept.map(collapse_whitespace)
         guaranteed = pd.DataFrame(
             {
                 "text_id": ids,
-                "text": normalised,
+                "text": kept,
                 "group_id": groups if group_id is not None else ids,
-                "n_chars": normalised.str.len().astype(int),
-                "n_words": normalised.map(lambda value: len(value.split())).astype(int),
+                "n_chars": collapsed.str.len().astype(int),
+                "n_words": collapsed.map(lambda value: len(value.split())).astype(int),
             }
         )
         dropped = [*source_names, *(name for name in DERIVED_COLUMNS if name in frame.columns)]
@@ -192,13 +209,13 @@ class TextTable:
         return list(self.frame["text_id"])
 
     def text_of(self, text_id: Any) -> str:
-        """Return the normalised text of one id.
+        """Return the text of one id as the table keeps it, which the coders send.
 
         Args:
             text_id: Identifier of the text.
 
         Returns:
-            The normalised text.
+            The text as given, with only its ends stripped.
 
         Raises:
             TextTableError: If the id is not in the table.
@@ -259,7 +276,7 @@ def _text_problems(texts: pd.Series, ids: pd.Series) -> list[str]:
     if not_string.any():
         problems.append(f"non-string text for ids {_listed(_ids_where(not_string, ids))}")
     blank = missing | (
-        ~not_string & texts.map(lambda value: isinstance(value, str) and not _normalise(value))
+        ~not_string & texts.map(lambda value: isinstance(value, str) and not value.strip())
     )
     if blank.any():
         problems.append(f"empty text for ids {_listed(_ids_where(blank, ids))}")

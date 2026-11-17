@@ -239,6 +239,24 @@ def test_estimate_refuses_a_clustered_difference_with_one_coded_group_on_a_side(
     assert independent["estimate"]["details"]["clustered"] is False  # type: ignore[index]
 
 
+def test_estimate_refuses_power_tuning_on_a_score_constant_on_the_coded_texts(
+    runner: CliRunner, files: dict[str, Path], drawn_gold: Path, tmp_path: Path
+) -> None:
+    scores = pd.read_csv(files["scores"])
+    scores.loc[scores["text_id"].isin(pd.read_csv(drawn_gold)["text_id"]), "score_a"] = 3.0
+    flat_files = {**files, "scores": tmp_path / "scores_flat.csv"}
+    scores.to_csv(flat_files["scores"], index=False)
+    for kind in (("--kind", "mean"), ("--kind", "difference", "--long-short")):
+        out, plain = tmp_path / f"{kind[1]}_tuned.json", tmp_path / f"{kind[1]}.json"
+        args = estimate_args(flat_files, drawn_gold, out, *kind, "--pi-column", "pi")
+        refused = runner.invoke(app, [*args, "--power-tuning"])
+        assert refused.exit_code == 1 and not out.exists()
+        assert "constant on the labelled rows" in refused.stderr
+        assert "estimate without power tuning" in refused.stderr
+        untuned = run_estimate(runner, flat_files, drawn_gold, plain, *kind, "--pi-column", "pi")
+        assert untuned["estimate"]["details"]["power_tuning"] is False  # type: ignore[index]
+
+
 def test_estimate_passes_the_weak_instrument_floor_to_oriv(
     runner: CliRunner, files: dict[str, Path], drawn_gold: Path, tmp_path: Path
 ) -> None:

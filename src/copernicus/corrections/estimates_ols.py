@@ -7,7 +7,21 @@ and ``c = mean(x v)`` over sets of texts, and report the influence-function (san
 
 with ``psi = x (v - x'beta)`` the estimating function of a text, sample covariances (divisor
 ``n - 1``) and no finite-population correction. ``s`` is the prediction of the construct on
-every text, ``g`` the gold value on the ``n`` labelled texts.
+every text, ``g`` the gold value on the ``n`` labelled texts. The variance is computed from the
+contributions transformed by ``H``: ``H t_i = psi_i`` is solved for every text of each term,
+and the covariances of the means of the ``t_i`` are added. In exact arithmetic that is the
+product above; computed this way the variance of a coefficient is a sum of squares, so rounding
+cannot make it negative, as it can the diagonal of the multiplied-out product, and nothing is
+clipped. An accepted ``H`` that is poorly conditioned can give a large standard error; a
+standard error of zero is right when the transformed contributions do not vary, as in a perfect
+fit; an ``H`` whose smallest eigenvalue is not clearly positive is refused. The details hold
+``condition_number``, the condition number of ``H`` scaled to a unit diagonal, which does not
+change with the units of the regressors. Above ``1 / sqrt(machine epsilon)``, about 6.7e7, the
+scaled ``H`` is nearly singular, so the solve can lose more than half of its digits, and a
+warning names the causes to check: a regressor that is nearly a combination of the others,
+and, for ``ols_predictor_ppi``, the subtraction of the labelled texts' moments leaving little
+of the construct's variance, which can happen although the designs of the scores and of the
+gold values are well conditioned.
 
 * ``ols_outcome_ppi``: the construct is the outcome of a regression on a design ``X`` observed
   on every text. ``X`` does not involve the construct, so the moment terms cancel to
@@ -21,9 +35,9 @@ every text, ``g`` the gold value on the ``n`` labelled texts.
   Rambachan), which makes its two variance terms independent.
 
 When the estimate clusters (by default, when a group holds more than one labelled text, as in
-the whole-group draw of ``draw_human_sample``; see ``_clustering``), each ``Cov(psi) / n`` becomes
-``Cov(S) * G / n^2`` over the group sums ``S`` of the term's rows centred at their mean: the
-groups of the base texts for the base term, those of the labelled texts for the other.
+the whole-group draw of ``draw_human_sample``; see ``_clustering``), each ``Cov(t) / n`` becomes
+``Cov(S) * G / n^2`` over the group sums ``S`` of the term's transformed rows centred at their
+mean: the groups of the base texts for the base term, those of the labelled texts for the other.
 
 A rectified moment matrix that is not positive definite leaves the estimate undefined. When every
 text is labelled, the ``ppi`` estimates equal OLS on the gold values.
@@ -32,6 +46,8 @@ text is labelled, the ``ppi`` estimates equal OLS on the gold values.
 from __future__ import annotations
 
 import logging
+import math
+from collections.abc import Sequence
 from types import MappingProxyType
 from typing import Literal
 
@@ -62,6 +78,14 @@ __all__ = ["ols_outcome_ppi", "ols_predictor_ppi"]
 
 VARIANTS = ("ppi", "ludwig")
 MIN_ROWS = 2
+CONDITION_WARNING = 1.0 / math.sqrt(float(np.finfo(float).eps))
+"""The scaled condition number above which a solve can lose more than half of its digits."""
+DEPENDENT_REGRESSOR = "a regressor that is nearly a combination of the others"
+"""A cause of a nearly singular moment matrix that the warning of both estimators names."""
+MOMENT_SUBTRACTION = (
+    "the subtraction of the labelled texts' moments leaving little of the construct's variance"
+)
+"""A cause that only the matrix of the corrected regression (``ols_predictor_ppi``) can have."""
 
 
 def _check_positive_definite(matrix: np.ndarray) -> None:
@@ -90,19 +114,68 @@ def _scores(design: np.ndarray, response: np.ndarray, beta: np.ndarray) -> np.nd
     return design * (response - design @ beta)[:, None]
 
 
+def _scaled_condition(moment: np.ndarray, method: str, causes: Sequence[str]) -> float:
+    """The condition number of the moment matrix scaled to a unit diagonal, with a warning.
+
+    Rescaling a regressor multiplies a row and a column of the moment matrix by one factor,
+    which the scaling to a unit diagonal undoes, so the number does not change with the units of
+    the regressors. Above ``CONDITION_WARNING`` the scaled matrix is nearly singular, so a solve
+    can lose more than half of its digits; the warning says so and names the causes to check.
+
+    Args:
+        moment: The rectified moment matrix, positive definite.
+        method: The estimator, for the warning.
+        causes: What can make this estimator's moment matrix nearly singular, for the warning.
+
+    Returns:
+        The condition number.
+    """
+    scale = 1.0 / np.sqrt(np.diag(moment))
+    condition = float(np.linalg.cond(moment * scale[:, None] * scale[None, :]))
+    if condition > CONDITION_WARNING:
+        logger.warning(
+            "%s: the moment matrix scaled to a unit diagonal is nearly singular (condition number "
+            "%.3g, above %.3g), so the solve can lose more than half of its digits; check for %s",
+            method,
+            condition,
+            CONDITION_WARNING,
+            ", and for ".join(causes),
+        )
+    return condition
+
+
+def _coefficient_covariance(
+    moment: np.ndarray, terms: Sequence[tuple[np.ndarray, np.ndarray | None]]
+) -> np.ndarray:
+    """The covariance of the coefficients from the contributions transformed by the moment matrix.
+
+    For each term, ``moment @ t_i = psi_i`` is solved for every row ``psi_i`` and the covariance
+    of the mean of the ``t_i`` is taken (independent rows, or the group sums of
+    ``_clustering``); the terms are added. The diagonal is a sum of squares, so no variance
+    comes out negative.
+
+    Args:
+        moment: The rectified moment matrix ``H``.
+        terms: The rows of each term with their groups (``None`` for independent rows).
+
+    Returns:
+        ``H^-1 [sum of the terms' covariances of the mean] H^-1``, without forming the inverse.
+    """
+    covariance = np.zeros_like(moment)
+    for rows, groups in terms:
+        transformed = np.linalg.solve(moment, rows.T).T
+        covariance = covariance + mean_covariance(transformed, groups)
+    return covariance
+
+
 def _report(
     beta: np.ndarray,
-    moment: np.ndarray,
-    variance: np.ndarray,
+    covariance: np.ndarray,
     columns: tuple[str, ...],
     position: int,
 ) -> tuple[float, float, dict[str, object]]:
     """The reported coefficient, its standard error, and every coefficient by name."""
-    inverse = np.linalg.inv(moment)
-    covariance = inverse @ variance @ inverse
-    # The sandwich is positive semi-definite by construction; the clip only removes rounding
-    # below zero on a diagonal entry that is zero in exact arithmetic.
-    errors = np.sqrt(np.clip(np.diag(covariance), 0.0, None))
+    errors = np.sqrt(np.diag(covariance))
     details: dict[str, object] = {
         "coefficients": MappingProxyType(dict(zip(columns, beta.tolist(), strict=True))),
         "standard_errors": MappingProxyType(dict(zip(columns, errors.tolist(), strict=True))),
@@ -144,9 +217,9 @@ def ols_outcome_ppi(
     Returns:
         The estimate, with method ``ppi_ols_outcome`` and details ``coefficients`` and
         ``standard_errors`` (read-only mappings over the design's columns), ``columns``,
-        ``coefficient`` (the reported column), ``prediction``, ``cluster`` (as given),
-        ``clustered`` (the choice made) and, when clustered, ``n_clusters`` and
-        ``n_clusters_labelled``.
+        ``coefficient`` (the reported column), ``prediction``, ``condition_number`` (of the
+        moment matrix scaled to a unit diagonal), ``cluster`` (as given), ``clustered`` (the
+        choice made) and, when clustered, ``n_clusters`` and ``n_clusters_labelled``.
 
     Raises:
         SettingsError: If not exactly one of ``formula`` and ``X`` is given, the formula is
@@ -168,14 +241,17 @@ def ols_outcome_ppi(
     _, target_scores = _moments(design[labelled], predicted[labelled])
     _, target_gold = _moments(design[labelled], gold)
     _check_positive_definite(moment)
+    condition = _scaled_condition(moment, "ppi_ols_outcome", (DEPENDENT_REGRESSOR,))
     beta = np.linalg.solve(moment, target_gold + (target_all - target_scores))
-    variance = mean_covariance(
-        _scores(design, predicted, beta), clustering.groups
-    ) + mean_covariance(
-        design[labelled] * (predicted[labelled] - gold)[:, None], clustering.labelled_groups
+    covariance = _coefficient_covariance(
+        moment,
+        [
+            (_scores(design, predicted, beta), clustering.groups),
+            (design[labelled] * (predicted[labelled] - gold)[:, None], clustering.labelled_groups),
+        ],
     )
-    point, se, details = _report(beta, moment, variance, columns, position)
-    details.update(prediction=name, **clustering.details())
+    point, se, details = _report(beta, covariance, columns, position)
+    details.update(prediction=name, condition_number=condition, **clustering.details())
     logger.debug(
         "prediction-powered outcome coefficient %r: %.4g (SE %.3g)", columns[position], point, se
     )
@@ -222,8 +298,9 @@ def ols_predictor_ppi(
         The estimate, with method ``ppi_ols_predictor`` or ``ludwig_ols_predictor`` and details
         ``coefficients``, ``standard_errors``, ``columns`` (``Intercept``, ``construct`` and the
         covariate columns), ``coefficient``, ``prediction``, ``variant``, ``outcome``,
-        ``n_base`` (the texts of the base term), ``cluster``, ``clustered`` and, when
-        clustered, ``n_clusters`` (groups of the base texts) and ``n_clusters_labelled``.
+        ``n_base`` (the texts of the base term), ``condition_number`` (as for
+        ``ols_outcome_ppi``), ``cluster``, ``clustered`` and, when clustered, ``n_clusters``
+        (groups of the base texts) and ``n_clusters_labelled``.
 
     Raises:
         SettingsError: If the variant is unknown, both ``covariates`` and ``X`` are given, the
@@ -259,19 +336,27 @@ def ols_predictor_ppi(
     moment_gold, target_gold = _moments(gold_design, response[labelled])
     moment = moment_gold + (moment_base - moment_scores)
     _check_positive_definite(moment)
+    condition = _scaled_condition(
+        moment, f"{variant}_ols_predictor", (DEPENDENT_REGRESSOR, MOMENT_SUBTRACTION)
+    )
     beta = np.linalg.solve(moment, target_gold + (target_base - target_scores))
     rectifier = _scores(design[labelled], response[labelled], beta) - _scores(
         gold_design, response[labelled], beta
     )
-    variance = mean_covariance(
-        _scores(design[base], response[base], beta), clustering.groups
-    ) + mean_covariance(rectifier, clustering.labelled_groups)
-    point, se, details = _report(beta, moment, variance, columns, position)
+    covariance = _coefficient_covariance(
+        moment,
+        [
+            (_scores(design[base], response[base], beta), clustering.groups),
+            (rectifier, clustering.labelled_groups),
+        ],
+    )
+    point, se, details = _report(beta, covariance, columns, position)
     details.update(
         prediction=name,
         variant=variant,
         outcome=outcome,
         n_base=int(base.sum()),
+        condition_number=condition,
         **clustering.details(),
     )
     logger.debug(

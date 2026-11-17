@@ -16,10 +16,11 @@ VOCABULARY_SIZE = 4096
 PAD_ID = 0
 CLS_ID = 1
 SEP_ID = 2
+# Valid version labels, as a real runtime records them; the local label marks them as fakes.
 FAKE_VERSIONS = {
     "resolved_revision": "fake-commit",
-    "torch_version": "fake-torch",
-    "transformers_version": "fake-transformers",
+    "torch_version": "2.99.0+fake",
+    "transformers_version": "4.99.0+fake",
 }
 
 

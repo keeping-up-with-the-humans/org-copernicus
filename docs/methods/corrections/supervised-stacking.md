@@ -11,7 +11,7 @@ Because the prediction combines several signals and need not keep the order of a
 3. **Penalty**, by variant, always with an unpenalised intercept:
     - `ridge`: the penalty of `ALPHAS` (41 values from 0.01 to 10^8, evenly spaced on the log scale) with the smallest exact leave-one-group-out error, from the same ridge as the [NLP-ML baseline](../nlp-ml-baseline.md).
     - `lasso`: scikit-learn's `LassoCV` over a path of 12 penalties (`max_iter` 1500, `tol` 0.001), validated on `min(5, groups)` grouped inner splits.
-    - `enet`: scikit-learn's `ElasticNetCV` with an L1 share of 0.5 or 0.9 on splits of the same kind.
+    - `enet`: scikit-learn's `ElasticNetCV` with an L1 share of 0.5 or 0.9 on splits of the same kind. The path of 12 penalties, `max_iter` and `tol` of both variants, and the two L1 shares of `enet`, are those of the paper's analysis code.
 4. **Inner seed.** The inner splits come from a seed drawn as the first number of the fit's generator and recorded as `inner_seed`; `ridge` needs no splits but draws and records the seed as well.
 5. **Predict.** The fitted stacker keeps the intercept and the coefficients on the standardised features and predicts `intercept + features @ coefficients` for any text.
 
@@ -90,7 +90,7 @@ enet 0.6
 
 - A training gold that is constant, or features that are all constant, are refused; the paper's analysis code predicted the constant.
 - The spread feature is the standard deviation of the scores after standardising each column on the training rows, so the units of a column do not change the predictions; the paper's analysis code took the spread of the raw scores.
-- The inner path of penalties of `lasso` and `enet` has 12 penalties.
+- The inner splits of `lasso` and `enet` follow a seed drawn from the fit's generator (`inner_seed`); the paper's analysis code keyed them to the run seed and the variant, so the same seed gives other splits and can give another penalty.
 
 ## Literature
 

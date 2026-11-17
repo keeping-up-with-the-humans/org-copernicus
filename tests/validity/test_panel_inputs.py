@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -16,7 +18,9 @@ TARGETS = {"construct": "gold_construct", "alpha": "gold_alpha", "beta": "gold_b
 EXPECTED_COLUMNS = [
     "target",
     "gold_column",
+    "unit",
     "n_used",
+    "n_texts",
     "n_dropped_missing",
     "n_runs",
     "status",
@@ -194,6 +198,25 @@ def test_missing_score_columns_are_named(world):
         )
 
 
+def test_only_a_frame_of_target_scores_may_leave_out_the_run_numbers(world):
+    # A frame with a target_id column, such as similarity output, counts every row as run 1 when
+    # it has no run_number column; a long attribute table without that column is refused, as in
+    # version 0.1.0.
+    with pytest.raises(ConfigurationError, match=r"needs column\(s\) \['run_number'\]"):
+        validity_panel(
+            world.scores.drop(columns="run_number"),
+            world.gold,
+            world.table,
+            targets=TARGETS,
+            settings=FAST,
+        )
+    targets = {"construct": "gold_construct"}
+    frame = similarity_frame(world)
+    assert "run_number" not in frame.columns
+    panel = validity_panel(frame, world.gold, world.table, targets=targets, settings=FAST)
+    assert panel.frame["n_runs"].tolist() == [1]
+
+
 def test_a_missing_gold_column_is_named(world):
     with pytest.raises(ConfigurationError, match="gold_missing"):
         validity_panel(
@@ -361,3 +384,21 @@ def test_a_target_frame_never_turns_a_target_name_into_the_aggregate() -> None:
     by_attribute = pd.DataFrame({**rows, "target_level": ["attribute"] * 3}).iloc[1:]
     with pytest.raises(ConfigurationError, match="matches no scores"):
         resolve_target_scores(by_attribute, ["construct"])
+
+
+def test_resolve_target_scores_takes_the_scores_and_the_keys_as_in_version_0_1_0() -> None:
+    assert list(inspect.signature(resolve_target_scores).parameters) == ["scores", "keys"]
+
+
+def test_the_construct_of_resolve_target_scores_leaves_out_a_row_without_a_run_number() -> None:
+    scores = pd.DataFrame(
+        {
+            "text_id": ["a", "a", "a", "a", "b"],
+            "run_number": [1, 1, None, None, None],
+            "attribute_id": ["first", "second", "first", "second", "first"],
+            "score": [1.0, 3.0, 9.0, 9.0, 4.0],
+        }
+    )
+    construct = resolve_target_scores(scores, ["construct"])["construct"]
+    assert construct["text_id"].tolist() == ["a"]
+    assert construct["run_number"].tolist() == [1] and construct["score"].tolist() == [2.0]

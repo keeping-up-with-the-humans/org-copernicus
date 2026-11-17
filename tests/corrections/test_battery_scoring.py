@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -17,11 +19,13 @@ from battery_support import (
     patch_linear,
 )
 from corrections_support import BATTERY_SCORES, battery_data, battery_frame, make_embedding_set
+from estimates_support import RELATIVE_TOLERANCE
 
 from copernicus.baseline.folds import rng_for
 from copernicus.corrections import (
     CorrectionData,
     best_score_column,
+    draw_from_data,
     get_correction,
     grouped_folds,
     holdout_split,
@@ -100,6 +104,58 @@ def test_sparse_binary_gold_gives_finite_rows_and_summaries() -> None:
     assert len(rows) == 3 and np.isfinite(rows["gain_rank_validity"]).all()
     assert (rows["n_folds_used"] < rows["n_folds"]).any()
     assert np.isfinite(summarize_battery(result)["gain_rank_validity"]).all()
+
+
+def _flat_on_the_diagnostic_draw() -> CorrectionData:
+    """The battery corpus with a first score column that is 3.0 on the diagnostic's drawn texts."""
+    data = battery_data()
+    draw = draw_from_data(data, 100, seed=keyed_seed(42, 100, "diagnostic"))
+    flat = np.where(np.isin(data.ids, draw.ids), 3.0, data.frame["score_a"].to_numpy())
+    return CorrectionData(
+        frame=data.frame.assign(score_flat=flat), score_columns=("score_flat", *BATTERY_SCORES)
+    )
+
+
+def test_a_diagnostic_score_constant_on_the_drawn_texts_leaves_no_tuned_mean(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="copernicus.corrections.families.pseudo"):
+        result = run_battery(_flat_on_the_diagnostic_draw(), BatterySettings([LINEAR], **SMALL))
+    row = result.results[result.results["diagnostic"]].iloc[0]
+    record = json.loads(row["provenance"])[0]
+    assert record["lambda_star"] is None and record["mean_rectified_tuned"] is None
+    constant = "the prediction is constant on the labelled rows (100 rows, each is 3.0)"
+    assert record["lambda_star_reason"].endswith(f"undefined because {constant}.")
+    assert record["mean_rectified_tuned_reason"].endswith(f"undefined, as {constant}.")
+    assert record["mean_rectified"] == pytest.approx(
+        -2.5643041760639993, rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+    assert row["raw_columns"] == "score_flat"
+    assert (row["rank_validity_raw"], row["rank_validity_corrected"]) == pytest.approx(
+        (0.5754905255941567, 0.6232685646349017), rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+    messages = [logged.getMessage() for logged in caplog.records]
+    assert any("constant on the labelled" in message for message in messages)
+    linear = fitted_rows(result)
+    assert list(linear["variant"]) == ["linear"] and result.skipped.empty
+    assert linear.loc[0, "rank_validity_corrected"] == pytest.approx(
+        0.8072046669907632, rel=RELATIVE_TOLERANCE, abs=0.0
+    )
+
+
+def test_a_saved_diagnostic_keeps_the_reasons_of_its_missing_tuned_values(tmp_path: Path) -> None:
+    result = run_battery(_flat_on_the_diagnostic_draw(), BatterySettings([LINEAR], **SMALL))
+    result.results.to_json(tmp_path / "results.json", orient="records")
+    result.results.to_parquet(tmp_path / "results.parquet", index=False)
+    for restored in (
+        pd.read_json(tmp_path / "results.json", orient="records"),
+        pd.read_parquet(tmp_path / "results.parquet"),
+    ):
+        diagnostic = restored[restored["diagnostic"].astype(bool)].iloc[0]
+        record = json.loads(diagnostic["provenance"])[0]
+        assert record["lambda_star"] is None and record["mean_rectified_tuned"] is None
+        for field in ("lambda_star_reason", "mean_rectified_tuned_reason"):
+            assert "constant on the labelled rows (100 rows" in record[field]
 
 
 def test_an_affine_calibration_moves_only_the_native_error() -> None:

@@ -8,12 +8,13 @@ The two-stage LLM coder is the library's main coder. It reads each text against 
 - A rubric and a text table. The tutorial uses the toy ones that ship with the package.
 - **A backend.** The tutorial uses `FakeBackend`, which answers from a table of cue words. It calls no model and costs nothing. Its scores show how the coder works. They are not the scores of a real model.
 
-To code with a real model, build `OpenAICompatibleBackend` instead of `FakeBackend`. This is a snippet to read, not to run:
+To code with a real model, build `OpenAICompatibleBackend` instead of `FakeBackend`. A model name with a maker in front, such as `maker/gpt-5-mini`, is recognised by the part after the last slash, so a reasoning model is sent only the parameters it accepts. This is a snippet to read, not to run:
 
 ```python
 backend = cop.OpenAICompatibleBackend(model="gpt-4.1-mini")  # reads OPENAI_API_KEY
-# A server of your own that speaks the same protocol:
-# backend = cop.OpenAICompatibleBackend(model="my-model", base_url="http://localhost:8000/v1")
+# A server of your own that speaks the same protocol. The backend needs a key: pass the one
+# the server expects, or any non-empty text when the server checks none:
+# backend = cop.OpenAICompatibleBackend(model="my-model", base_url="http://localhost:8000/v1", api_key="EMPTY")
 # A model on your own GPU, through vLLM (needs the vllm extra):
 # backend = cop.VLLMBackend(...)
 ```
@@ -125,7 +126,7 @@ print(again.n_texts, again.n_attribute_calls, again.resumed)
 
 The 108 resumed cells are the 54 texts times 2 runs. An interrupted run resumes in the same way: the coder writes the store every `save_every` texts (10 by default) and at the end, so a stop loses at most the current batch.
 
-The store binds each text id to the text it was coded on: every row records the hash of its text, the `text_hash` column of `export_scores`. If a text has changed under its id since it was coded, the call stops with a `StoreError` that names the changed ids, before it calls the backend. Code the changed texts into a new store, or restore the texts. Runs of whitespace collapse to one space before hashing, so a change in the amount of whitespace between words is no change; inserting or removing a space between letters is one: `ab` and `a b` are two texts.
+The store binds each text id to the text it was coded on: every row records the hash of its text, the `text_hash` column of `export_scores`. If a text has changed under its id since it was coded, the call stops with a `StoreError` that names the changed ids, before it calls the backend. Code the changed texts into a new store, or restore the texts. The hash is taken of the text as the coder sends it, with its line breaks and runs of spaces, so a change of the whitespace between words is a change, as a change of a letter is: `ab` and `a b` are two texts, and the same words with a line break or two spaces between them are two more. Whitespace at the ends of a text is no change, because the table strips it. A store of an earlier version of the library, which collapsed every run of whitespace to one space before it sent a text, refuses the texts with such whitespace in the same way, with a message that says so: code them into a new store, or pass them with their whitespace collapsed (`copernicus.data.table.collapse_whitespace`) to continue the old coding.
 
 Cells with a failed attribute (`extraction_failed` or `scoring_failed`) stay in the store and are not coded again by a plain rerun. The failure check at the end of every call over their texts and runs counts them, so a rerun of a failed run stops with the same error instead of passing as a success. `CodingSettings(retry_failed=True)` (`--retry-failed` on the command line) codes those cells again and replaces their rows and passages; the summary counts them in `retried`. A retry codes a cell with the same prompts, seeds and temperatures, so it repairs failures of the backend, such as answers that came back empty or malformed on every attempt, and not a model that fails the same text every time. Such a text fails again; it needs a changed setting of the coder, such as a larger `stage1_max_new_tokens` for an answer that is cut off, or another model, and with either a new store, since both belong to the identity of a store. A request that fails at the transport level even after the backend's own retries, such as a timeout, is not stored at all: it stops the run with a `BackendError`, and a plain rerun codes its cell.
 
@@ -235,7 +236,7 @@ copernicus store export run.sqlite --what scores --out scores.csv
 - **A fake backend's scores say nothing about a real model.** Always check a real model's scores with the [validity panel](validity-panel.md).
 - **Texts shorter than 20 characters are skipped** (`too_short`). Change `min_chars` in `TwoStageConfig` if your texts are short.
 - **Ids stay strings.** The table reader keeps the ids as written (`"007"` stays `"007"`) and the library compares them as strings, so `"007"` and `"7"` are different ids.
-- **A changed rubric, model, setting or text needs a new store.** The store refuses to mix runs and to keep results of an earlier text under an id. A store whose tables lack a column this version of the library writes, such as `text_hash`, or hold one it does not write, is refused too, whether an earlier version made it or someone changed it by hand: code into a new store.
+- **A changed rubric content, model, setting or text needs a new store.** The store refuses to mix runs and to keep results of an earlier text under an id. The content of a rubric is what its content hash covers: the order of the fields in the rubric file does not count, and neither does the order in which a marker lists its levels, except for the one-stage coder, whose prompt lists the levels in that order, so that its store refuses another order (see [the rubric tutorial](rubric.md)). A store whose tables lack a column this version of the library writes, such as `text_hash`, or hold one it does not write, is refused too, whether an earlier version made it or someone changed it by hand: code into a new store.
 
 ## Next
 

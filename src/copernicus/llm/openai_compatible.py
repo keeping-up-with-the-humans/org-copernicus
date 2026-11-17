@@ -147,7 +147,8 @@ class OpenAICompatibleBackend:
                 at least 1.
             concurrency: Number of parallel requests in ``generate_batch``; at least 1.
             capabilities: Sampling parameters the model accepts; looked up from the model
-                name when ``None``.
+                name when ``None``, where a name with a maker in front (``maker/gpt-5-mini``)
+                is recognised by the part after its last ``/``.
             extra_body: Extra fields merged into every request body.
             client: A ready client exposing ``chat.completions.create``; built from the
                 other arguments when ``None``. An injected client is described in the

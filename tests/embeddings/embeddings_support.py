@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 from collections.abc import Callable
@@ -19,7 +20,8 @@ MINILM_FILES = ("config.json", "tokenizer.json", "model.safetensors")
 TORCH_INSTALLED = importlib.util.find_spec("torch") is not None
 TORCH_SKIP_REASON = (
     "torch is not installed; install the embed extra: "
-    'pip install "org-copernicus[embed]", or pip install ".[embed]" from the package\'s root folder'
+    'pip install ".[embed]" from the package\'s root folder, '
+    'or pip install "org-copernicus[embed]" once a release has been uploaded to the package index'
 )
 WEIGHTS_SKIP_REASON = "MiniLM weights not cached; set COPERNICUS_TEST_DOWNLOAD=1 to fetch"
 TestFunction = TypeVar("TestFunction", bound=Callable[..., Any])
@@ -103,6 +105,12 @@ class WordTokenizer:
     def decode(self, ids: list[int], skip_special_tokens: bool = True) -> str:
         assert skip_special_tokens is True
         return " ".join(self.words[token - 3] for token in ids)
+
+
+def documented_texts_hash(texts: list[str]) -> str:
+    """The digest of texts as `texts_hash` documents it, computed with hashlib alone."""
+    per_text = "".join(hashlib.sha256(text.encode("utf-8")).hexdigest() for text in texts)
+    return hashlib.sha256(per_text.encode("ascii")).hexdigest()
 
 
 def small_set(

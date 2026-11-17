@@ -13,7 +13,16 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from copernicus._digests import ARRAYS_HASH_KEY, arrays_hash, check_arrays_hash, without_arrays_hash
+from copernicus._digests import (
+    ARRAYS_HASH_KEY,
+    TEXTS_HASH_KEY,
+    arrays_hash,
+    check_arrays_hash,
+    digest_problem,
+    text_record,
+    without_arrays_hash,
+    without_texts_hash,
+)
 from copernicus._io import (
     as_unicode_1d,
     encoder_identity,
@@ -34,6 +43,7 @@ ARRAY_NAMES = ("ids", "vectors", "chunk_vectors", "chunk_owner", "chunk_weight")
 MAX_IDS_IN_MESSAGE = 10
 OWNER = "embedding set"
 EMBED_AGAIN = "embed the texts again (Encoder.embed, or copernicus embed texts)"
+RESTORE_OR_EMBED_AGAIN = f"restore the description that was saved with the set, or {EMBED_AGAIN}"
 
 
 @dataclass(frozen=True, eq=False)
@@ -62,9 +72,12 @@ class EmbeddingSet:
             ``hf_id``, ``revision``, ``pooling``, ``max_tokens``, ``dtype``,
             ``trust_remote_code``, ``padding_side``, and ``special_tokens_reserved``; the
             version keys ``resolved_revision``, ``torch_version``, and
-            ``transformers_version`` when an encoder made the set; and, once loaded from
-            disk, the counts, the library version, the creation time, and ``arrays_hash``,
-            the digest of the arrays of the file.
+            ``transformers_version`` when an encoder made the set, and the record of the
+            texts it embedded, ``text_form`` (``"as_given"``) and ``texts_hash`` (their
+            digest, see `copernicus._digests.texts_hash`), absent from a set made by hand
+            or by an earlier version; and, once loaded from disk, the counts, the library
+            version, the creation time, and ``arrays_hash``, the digest of the arrays of
+            the file.
     """
 
     ids: np.ndarray
@@ -110,7 +123,8 @@ class EmbeddingSet:
         """Write the arrays to ``<stem>.npz`` and the description to ``<stem>.json``.
 
         The description holds the encoder name, the identity keys and the known version
-        keys of the sidecar, the numbers of texts and chunks, the library version, the
+        keys of the sidecar, ``text_form`` and ``texts_hash`` when the sidecar holds them,
+        the numbers of texts and chunks, the library version, the
         creation time in UTC, ``arrays_hash``, the digest of the arrays in the order they
         are written, and the metadata as a list of records when there is any. It is written
         last, and `load` refuses arrays that it does not name.
@@ -127,6 +141,7 @@ class EmbeddingSet:
         description: dict[str, Any] = {"encoder": self.encoder}
         description.update(encoder_identity(self.sidecar, OWNER))
         description.update(encoder_versions(self.sidecar))
+        description.update(text_record(self.sidecar))
         array_path, sidecar_path = stem_paths(stem)
         description.update(
             n_texts=len(self),
@@ -161,8 +176,10 @@ class EmbeddingSet:
                 the arrays or the description are inconsistent, the set was made with another
                 encoder than expected, the description records no ``arrays_hash`` (it was
                 written by an earlier version: embed the texts again) or a value that is not
-                a digest, or the arrays are not the ones the description names, as a save
-                stopped between its two writes leaves.
+                a digest, records a ``texts_hash`` that is not a digest (restore the saved
+                description or embed again; a description without one loads as before), or
+                the arrays are not the ones the description names, as a save stopped between
+                its two writes leaves.
         """
         array_path, sidecar_path = stem_paths(stem)
         for path in (array_path, sidecar_path):
@@ -193,6 +210,12 @@ class EmbeddingSet:
                 f"the arrays hold {len(loaded['chunk_owner'])}"
             )
         check_arrays_hash(description, loaded, stem, OWNER, EMBED_AGAIN)
+        if TEXTS_HASH_KEY in description:
+            problem = digest_problem(TEXTS_HASH_KEY, description[TEXTS_HASH_KEY])
+            if problem is not None:
+                raise ConfigurationError(
+                    f"{OWNER} {stem}: {sidecar_path.name}: {problem}; {RESTORE_OR_EMBED_AGAIN}"
+                )
         records = description.get("metadata")
         metadata = pd.DataFrame.from_records(records) if records is not None else None
         return cls(encoder=made_with, metadata=metadata, sidecar=description, **loaded)
@@ -205,7 +228,8 @@ class EmbeddingSet:
 
         Returns:
             A new set whose ``chunk_owner`` indexes the kept texts; its sidecar leaves out
-            ``arrays_hash``, since `save` records the digest of the arrays it writes.
+            ``arrays_hash``, since `save` records the digest of the arrays it writes, and
+            ``texts_hash``, which names the texts of the whole set; ``text_form`` stays.
 
         Raises:
             ConfigurationError: If an id is unknown or given twice.
@@ -223,7 +247,11 @@ class EmbeddingSet:
         new_row[rows] = np.arange(len(rows))
         kept = np.flatnonzero(new_row[self.chunk_owner] >= 0)
         kept = kept[np.argsort(new_row[self.chunk_owner[kept]], kind="stable")]
-        sidecar = {**without_arrays_hash(self.sidecar), "n_texts": len(rows), "n_chunks": len(kept)}
+        sidecar = {
+            **without_texts_hash(without_arrays_hash(self.sidecar)),
+            "n_texts": len(rows),
+            "n_chunks": len(kept),
+        }
         return replace(
             self,
             ids=self.ids[rows],

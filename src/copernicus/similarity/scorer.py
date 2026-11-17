@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from copernicus._io import check_same_encoder
+from copernicus._load_check import compare_loads
 from copernicus.embeddings import EmbeddingSet
 from copernicus.errors import ConfigurationError
 from copernicus.rubric.identifiers import ROLLUP_SUFFIX, TARGET_CONSTRUCT
@@ -84,10 +84,10 @@ def _check_inputs(
 
     Raises:
         ConfigurationError: On a different encoder name, encoder identity (any identity
-            key of the sidecars, or the loaded commits when both sidecars record one),
-            dimension, rubric, or rubric content (the references record another rubric
-            hash), targets given as one string, an unknown or empty target list, or a
-            missing pole of a target that will be scored.
+            key of the sidecars, or the loaded commits when both sidecars record one), major
+            line of transformers, unreadable recorded version, dimension, rubric, or rubric
+            content (the references record another rubric hash), targets given as one string,
+            an unknown or empty target list, or a missing pole of a target that will be scored.
     """
     if isinstance(targets, str):
         raise ConfigurationError(
@@ -98,7 +98,9 @@ def _check_inputs(
         raise ConfigurationError(
             f"texts were embedded with encoder {texts.encoder}, references with {refs.encoder}"
         )
-    check_same_encoder(texts.sidecar, refs.sidecar, "texts", "reference embeddings")
+    # Two loads are refused here, before the other checks; the pole scorer built for the
+    # scoring compares them again and logs the warnings of the comparison, once.
+    compare_loads(texts.sidecar, refs.sidecar)
     if texts.vectors.shape[1] != refs.vectors.shape[1]:
         raise ConfigurationError(
             f"texts have dimension {texts.vectors.shape[1]}, references {refs.vectors.shape[1]}"
@@ -215,8 +217,9 @@ def score_similarity_many(
 
     Raises:
         ConfigurationError: If the inputs do not belong together (the references of
-            another rubric, or of another content of this one, among them), a pole is
-            missing, a reduction fails, or no settings are given.
+            another rubric, or of another content of this one, or of another load of the
+            encoder, as `score_similarity` says, among them), a pole is missing, a reduction
+            fails, or no settings are given.
     """
     if len(settings_list) == 0:
         raise ConfigurationError("score_similarity_many needs at least one settings object")
@@ -254,6 +257,13 @@ def score_similarity(
     scored and rolled up into the row ``<rubric_id>__rollup`` with the same reduction (for
     ``positive`` and ``negative`` the roll-up takes the scores of that polarity).
 
+    Texts and references must not record two loads of the encoder. Two releases of one major
+    version of transformers, two versions of torch, or a side whose sidecar records no
+    version (a set built by hand) are scored, each with a warning that the pole scorer of the
+    call logs once (logger ``copernicus.similarity.poles``);
+    `copernicus.similarity.scoring_provenance` records both sides' versions, or that a
+    comparison was not possible, and the warnings under ``load_comparison``.
+
     Args:
         texts: The embedded texts.
         refs: Reference embeddings made with the same encoder, of one style.
@@ -273,12 +283,15 @@ def score_similarity(
     Raises:
         ConfigurationError: If texts and references come from different encoders (by name
             or by any identity key of their sidecars: model id, revision, pooling, window,
-            dtype, remote-code switch, padding side, reserved special tokens), from
-            different commits of the model (when both sidecars record one other than
-            ``"unknown"``; a commit changes even with the documentation alone, so re-embed
-            or pin), or have different dimensions, the references are for another rubric
-            or for another content of it (their rubric hash differs from the rubric's,
-            as after an edit under the same ids) or mix styles, a pole is missing, a
-            target is unknown, or a reduction fails.
+            dtype, remote-code switch, padding side, reserved special tokens; the message
+            says to embed both sides with one encoder specification), from different
+            commits of the model (when both sidecars record one other than ``"unknown"``; a
+            commit changes even with the documentation alone, so re-embed or pin), or record
+            transformers versions of two major versions or two epochs (embed both sides in
+            one environment), a sidecar records a version that cannot be read, the sets
+            have different dimensions, the references are for another rubric or for another
+            content of it (their rubric hash differs from the rubric's, as after an edit
+            under the same ids) or mix styles, a pole is missing, a target is unknown, or a
+            reduction fails.
     """
     return score_similarity_many(texts, refs, rubric, [settings], targets=targets)

@@ -194,7 +194,9 @@ def capabilities_for_model(model: str) -> ModelCapabilities:
 
     Reasoning models (names starting with ``gpt-5``, ``o1``, ``o3``, ``o4``) reject
     temperature and nucleus sampling and bound the output with
-    ``max_completion_tokens``; every other model accepts all parameters.
+    ``max_completion_tokens``; every other model accepts all parameters. A name with a maker
+    in front, as a router or a server writes it (``maker/gpt-5-mini``), is recognised by the
+    part after its last ``/``; a backend still sends the name as given.
 
     Args:
         model: Model name; matched case-insensitively.
@@ -202,7 +204,7 @@ def capabilities_for_model(model: str) -> ModelCapabilities:
     Returns:
         The capabilities of the model.
     """
-    if model.lower().startswith(RESTRICTED_MODEL_PREFIXES):
+    if model.rsplit("/", 1)[-1].lower().startswith(RESTRICTED_MODEL_PREFIXES):
         return ModelCapabilities(
             supports_temperature=False,
             supports_top_p=False,

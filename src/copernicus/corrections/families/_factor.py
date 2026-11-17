@@ -2,9 +2,11 @@
 
 A single principal-axis factor is extracted from a correlation matrix of standardised score
 columns, its sign is aligned with the row mean of the standardised scores, and the
-loadings turn a standardised row into a factor score. The standardisation uses the
-population standard deviation of the training rows, with a standard deviation of 1 for a
-constant column (which therefore standardises to zeros and carries no weight).
+loadings turn a standardised row into a factor score. The standardisation subtracts each
+column's computed mean on the training rows and divides by its population standard deviation
+there, and by 1 when the column's range is at most ``1e-12`` times the larger of 1 and its
+largest absolute value. A constant column has no variation after scaling, though rounding can
+leave it at a constant value other than zero, and it can still receive a loading.
 """
 
 from __future__ import annotations

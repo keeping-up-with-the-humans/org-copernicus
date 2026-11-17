@@ -21,7 +21,7 @@ variants therefore share one eigendecomposition per fold.
 
 Feature scaling is fitted on the training draw only (``fit_scaler``); the stacked variant
 rescales each z-scored encoder block so that every encoder contributes the same total
-variance.
+variance when no column of any block is constant.
 
 The penalty grid is ``logspace(-2, 8, 41)`` (0.25 log10 spacing). The selected penalty
 and whether it sits on a grid edge are recorded on every fit.
@@ -63,7 +63,7 @@ class Scaler:
 
     Attributes:
         means: Column means of each block.
-        sds: Column standard deviations of each block; constant columns hold 1.
+        sds: Column standard deviations of each block; a computed zero is replaced by 1.
         weights: Multiplier applied to each scaled block.
     """
 
@@ -73,12 +73,14 @@ class Scaler:
 
 
 def fit_scaler(blocks: Sequence[np.ndarray]) -> Scaler:
-    """Fit column z-scoring per block; constant columns get SD 1.
+    """Fit column z-scoring per block; a column whose computed SD is exactly zero gets SD 1.
 
     With several blocks (stacked encoders) block ``b`` is multiplied by
-    ``sqrt(mean_dim / dim_b)`` so that each block's total variance equals the mean block
-    dimension and the concatenation keeps the scale of a plain z-scored design; a single
-    block keeps weight 1.
+    ``sqrt(mean_dim / dim_b)``, with ``dim_b`` counting every column of the block. When no
+    column is constant, each block's total variance then equals the mean block dimension and
+    the concatenation keeps the scale of a plain z-scored design; a constant column adds no
+    variance after scaling, though rounding can leave it at a constant value other than zero,
+    and so lowers the variance of its block. A single block keeps weight 1.
 
     Args:
         blocks: Training feature blocks, each of shape ``(n_rows, dim_b)``.

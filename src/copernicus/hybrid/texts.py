@@ -17,6 +17,12 @@ from copernicus.coders import (
     hash_text,
     normalize,
 )
+from copernicus.coders.text_hash import (
+    COLLAPSED_CODING,
+    COLLAPSED_FORM,
+    collapsed_hash,
+    split_collapsed,
+)
 from copernicus.coders.two_stage_types import EXTRACTION_FAILED
 from copernicus.data import TextTable
 from copernicus.errors import ConfigurationError, EvidenceContractError, SettingsError
@@ -42,8 +48,8 @@ class HybridTexts:
     Attributes:
         ids: Text ids as strings, in table order.
         texts: The evidence text of each text: its verified passages joined by newlines,
-            or the raw text when ``fallback`` is not empty.
-        fallback: ``""`` when the evidence text is used, ``"short"`` when the raw text has
+            or, when ``fallback`` is not empty, its text as the table holds it.
+        fallback: ``""`` when the evidence text is used, ``"short"`` when its own text has
             fewer than ``min_words`` words, ``"no_evidence"`` when no verified passage
             remains.
         attribute_id: The attribute whose markers supplied the passages; ``None`` for the
@@ -90,23 +96,33 @@ def _check_texts(
 
     Raises:
         ConfigurationError: If the text hash of a text differs from the stored one; the
-            first ten such ids are named, in table order.
+            first ten such ids are named, in table order, those coded on the text with its
+            whitespace collapsed apart from the others.
     """
     stored: dict[str, set[str]] = {}
     for text_id, text_hash in zip(results["text_id"], results["text_hash"], strict=True):
         stored.setdefault(str(text_id), set()).add(str(text_hash))
-    changed = [
-        str(text_id)
-        for text_id in table.ids()
-        if stored[str(text_id)] != {hash_text(table.text_of(text_id))}
-    ]
-    if changed:
-        raise ConfigurationError(
-            f"{len(changed)} of {len(table)} texts differ from the texts that run {run_number} "
-            f"of the store {store_path} was coded on: {_listed(changed)}; a store binds every "
+    offered = [(str(text_id), table.text_of(text_id)) for text_id in table.ids()]
+    changed = [(text_id, text) for text_id, text in offered if stored[text_id] != {hash_text(text)}]
+    if not changed:
+        return
+    collapsed = [(text_id, collapsed_hash(text)) for text_id, text in changed]
+    on_collapsed, others = split_collapsed(collapsed, stored)
+    problems: list[str] = []
+    if others:
+        problems.append(
+            f"{len(others)} of {len(table)} texts differ from the texts that run {run_number} "
+            f"of the store {store_path} was coded on: {_listed(others)}; a store binds every "
             "text id to the text it was coded on; pass the texts the store was coded on, or "
             "code the changed texts into a new store"
         )
+    if on_collapsed:
+        verb = "was" if len(on_collapsed) == 1 else "were"
+        problems.append(
+            f"{len(on_collapsed)} of {len(table)} texts {verb} coded in run {run_number} of the "
+            f"store {store_path} {COLLAPSED_FORM}: {_listed(on_collapsed)}; {COLLAPSED_CODING}"
+        )
+    raise ConfigurationError("; ".join(problems))
 
 
 def _check_extractions(
@@ -116,7 +132,7 @@ def _check_extractions(
 
     A failed extraction leaves its attribute without passages: the evidence text would lack
     them, and a text left without any passage would be scored as one without evidence. A
-    text with fewer than ``min_words`` words keeps its raw text whatever its passages, so a
+    text with fewer than ``min_words`` words keeps its own text whatever its passages, so a
     failed extraction takes nothing from it. A failed scoring leaves the passages in place.
 
     Args:
@@ -124,7 +140,7 @@ def _check_extractions(
         table: The texts; every one has results in ``results``.
         results: The long score table of the run.
         run_number: The run, for the message.
-        min_words: Texts with fewer words keep their raw text.
+        min_words: Texts with fewer words keep their own text.
 
     Raises:
         ConfigurationError: If a text of the table with at least ``min_words`` words has an
@@ -260,15 +276,15 @@ def _assemble(
         frame["text_id"], frame["text"], frame["n_words"], strict=True
     ):
         key = str(text_id)
-        clean = " ".join(str(raw).split())
+        own = str(raw)
         ids.append(key)
         if int(n_words) < min_words:
-            texts.append(clean)
+            texts.append(own)
             fallback.append(FALLBACK_SHORT)
             continue
         kept = _join_passages(passages.get(key, []))
         if not kept:
-            texts.append(clean)
+            texts.append(own)
             fallback.append(FALLBACK_NO_EVIDENCE)
             continue
         joined = "\n".join(kept)
@@ -324,16 +340,17 @@ def evidence_texts(
     """Rebuild each text from the verified passages of a two-stage run.
 
     Per text, in table order: a text with fewer than ``min_words`` words (the ``n_words``
-    of the table) keeps its raw text with the fallback ``"short"``. Otherwise the passages
-    of the run that were verified and are not repeats within their marker are ordered by
-    their position in the text (start offset, then end offset, attribute id, marker id, and
-    passage index), reduced to the first of those that are equal after
-    `copernicus.coders.normalize`, and joined by newlines. A text left without a
-    passage keeps its raw text with the fallback ``"no_evidence"``. At ``"attribute"``
-    granularity only the passages of the markers of one attribute count, and every
-    attribute gets its own texts. A text that is not short and has an attribute whose
-    extraction failed in the run is refused, because its passages are incomplete; a failed
-    scoring leaves the passages in place, so such a text is rebuilt as any other.
+    of the table) keeps its own text, as the table holds it (as given, with only its ends
+    stripped), with the fallback ``"short"``. Otherwise the passages of the run that were
+    verified and are not repeats within their marker are ordered by their position in the
+    text (start offset, then end offset, attribute id, marker id, and passage index),
+    reduced to the first of those that are equal after `copernicus.coders.normalize`, and
+    joined by newlines. A text left without a passage keeps its own text with the fallback
+    ``"no_evidence"``. At ``"attribute"`` granularity only the passages of the markers of
+    one attribute count, and every attribute gets its own texts. A text that is not short
+    and has an attribute whose extraction failed in the run is refused, because its
+    passages are incomplete; a failed scoring leaves the passages in place, so such a text
+    is rebuilt as any other.
 
     Args:
         store_path: Run store of a two-stage run.
@@ -343,7 +360,7 @@ def evidence_texts(
         granularity: ``"construct"`` for one text per text of the table, ``"attribute"``
             for one per attribute.
         run_number: The run whose passages are read.
-        min_words: Texts with fewer words stay raw.
+        min_words: Texts with fewer words keep their own text.
 
     Returns:
         The texts at ``"construct"`` granularity; at ``"attribute"`` granularity a mapping

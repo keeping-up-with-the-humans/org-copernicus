@@ -52,7 +52,8 @@ class TwoStageConfig:
         stage2_max_new_tokens: Generation budget of the scoring stage.
         verify_threshold: Alignment score a passage needs to count as verified.
         min_fuzzy_words: Shortest passage, in words, that may match approximately.
-        min_chars: Texts shorter than this (after stripping) are not coded.
+        min_chars: Texts with fewer characters than this are not coded, counted on the text
+            as it is sent, whitespace between its words included and at its ends not.
         no_evidence_score: Score recorded when no marker kept a verified
             passage; ``None`` leaves the score missing.
         stage2_evidence: ``"unlabelled"`` lists the passages once;

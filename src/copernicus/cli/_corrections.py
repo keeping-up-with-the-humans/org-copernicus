@@ -140,7 +140,12 @@ def sample(
 @corrections_app.command("plan")
 def plan(
     rho: Annotated[
-        float, typer.Option("--rho", help="Correlation of the machine score with the human value.")
+        float,
+        typer.Option(
+            "--rho",
+            help="Pearson correlation of the machine score with the human value, computed from "
+            "the data; a rank correlation is another number.",
+        ),
     ],
     n_human: Annotated[
         str,
@@ -160,8 +165,14 @@ def plan(
 ) -> None:
     """Plan the human sample: the effective-size factor of a corrected estimate.
 
-    The human sample counts as factor times its size; limit is the factor for unbounded
-    machine-scored texts, and uncorrected is 1 / rho^2.
+    The human sample counts as factor times its size; limit is the upper limit of this
+    multiplier as the machine-scored texts grow, and uncorrected is 1 / rho^2, about the
+    machine-scored texts that, used without correction, test a small association with a
+    covariate with the power of one human-coded text. That holds for independent texts whose
+    human value, score and covariate are jointly normal, with a score that is a line in the
+    human value plus an error independent of the human value and of the covariate; with an
+    error whose size depends on the covariate the number can differ. The factor is that of a
+    mean; plan_sample_size in Python says when it holds for a regression coefficient.
     """
     with cli_logging(verbose), cli_errors():
         if out is not None:

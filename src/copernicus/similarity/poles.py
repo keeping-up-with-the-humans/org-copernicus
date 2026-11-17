@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from typing import Any
 
 import numpy as np
 
+from copernicus._load_check import compare_loads
 from copernicus.embeddings import EmbeddingSet
 from copernicus.errors import ConfigurationError
 from copernicus.similarity.reduce import reduce_matrix
@@ -33,6 +35,11 @@ def per_reference_similarity(
     texts: EmbeddingSet, ref_vectors: np.ndarray, long_text: str
 ) -> np.ndarray:
     """Return the cosine of every text to every reference.
+
+    This is the arithmetic kernel of the coder. It receives the reference vectors as an
+    array, without their sidecar, so it checks nothing about the two loads of the encoder or
+    the rubric: give it vectors of one load. `PoleScorer` compares the two loads when it is
+    built, and `copernicus.similarity.score_similarity` checks the rubric as well.
 
     Args:
         texts: The embedded texts.
@@ -101,17 +108,46 @@ def pool_writers(per_writer: Sequence[np.ndarray], mode: str) -> np.ndarray:
 class PoleScorer:
     """Scores one set of texts against the poles of one set of reference embeddings.
 
-    The pole scores are kept per target, pole, reduction, writer pooling, and long-text
-    mode, so scoring many settings that share them (the polarities, the target levels)
-    repeats no work.
+    Building the scorer compares the two loads of the encoder from the sidecars of the texts
+    and the references (`copernicus._load_check.compare_loads`): texts and references of two
+    loads are refused, each warning of the comparison is logged once, through this module's
+    logger, and the comparison is kept in `load_comparison`. The scoring functions of the
+    coder build one scorer per scoring call, so a call logs each warning once. The pole scores
+    are kept per target, pole, reduction, writer pooling, and long-text mode, so scoring many
+    settings that share them (the polarities, the target levels) repeats no work.
     """
 
     def __init__(self, texts: EmbeddingSet, refs: ReferenceEmbeddings, rubric_id: str) -> None:
-        """Remember the texts and references; ``rubric_id`` names them in messages."""
+        """Compare the two loads, then remember the texts and references.
+
+        Args:
+            texts: The embedded texts.
+            refs: The reference embeddings.
+            rubric_id: Names the references in messages.
+
+        Raises:
+            ConfigurationError: If the texts and the references come from two loads of the
+                encoder: another identity key or loaded commit, transformers versions of two
+                major versions or two epochs, or a recorded version that cannot be read.
+        """
+        self._load_comparison = compare_loads(texts.sidecar, refs.sidecar)
+        for message in self._load_comparison["warnings"]:
+            logger.warning(message)
         self._texts = texts
         self._refs = refs
         self._rubric_id = rubric_id
         self._poles: dict[tuple[str, str, str, str, str], tuple[np.ndarray, int]] = {}
+
+    @property
+    def load_comparison(self) -> dict[str, Any]:
+        """Return the comparison of the two loads made when the scorer was built.
+
+        Returns:
+            ``texts`` and ``references``, the transformers and torch versions each side
+            records (``"unknown"`` for one it does not record), and ``warnings``, the messages
+            logged when the scorer was built.
+        """
+        return self._load_comparison
 
     def _writer_cosines(self, rows: np.ndarray, writer: str, long_text: str) -> np.ndarray:
         """Return the cosines to the references of one writer among the rows of a pole."""

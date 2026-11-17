@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -29,6 +32,53 @@ def test_plan_sample_size_formulas() -> None:
     assert plan.factor == pytest.approx(1 / (0.51 + 0.49 * 100 / 1000))
     assert (plan.rho, plan.n_human, plan.n_machine) == (0.70, 100, 1000)
     assert plan_sample_size(0.5, 50, 50).factor == pytest.approx(1.0)
+
+
+def test_the_docstrings_name_the_correlation_and_what_each_number_means() -> None:
+    def flat(text: str | None) -> str:
+        return " ".join((text or "").split())
+
+    plan, sample = flat(SizePlan.__doc__), flat(plan_sample_size.__doc__)
+    assert "rho: Pearson correlation" in plan
+    assert "upper limit of the multiplier" in plan
+    assert "machine-scored texts that, used without correction" in plan
+    assert "human texts per machine-scored text" not in plan
+    for text in (flat(planning.__doc__), sample, flat(plan_table.__doc__)):
+        assert "Pearson correlation" in text
+    assert "partial correlation" in sample and "large-sample" in sample
+
+
+DOCS = Path(__file__).resolve().parents[2] / "docs"
+ILLUSTRATED = ("tutorials/sample-size.md", "methods/corrections/index.md")
+DEFAULT_WEIGHT_WORTH = "n_human / (1 + (1 - n_human / n_machine) * (c^2 - 2 * rho * c))"
+NUMBER = r"([0-9]+(?:\.[0-9]+)?)"
+ILLUSTRATION = re.compile(
+    rf"With `rho = {NUMBER}`, `c = {NUMBER}`, `n_human = {NUMBER}` and `n_machine = {NUMBER}`, "
+    rf".*? the plan promises an effective size of {NUMBER} texts and the default weight is "
+    rf"worth {NUMBER}, from `([^`]+)`"
+)
+
+
+def default_weight_worth(rho: float, c: float, n_human: int, n_machine: int) -> float:
+    """The large-sample effective size of the prediction-powered mean with the weight 1.
+
+    For independent texts and the mean of the population they come from, the variance of
+    ``mean(y_lab) + mean(s_all) - mean(s_lab)`` is ``var(y) / n * (1 + (1 - n / N) * (c^2 - 2
+    rho c))``, with ``c`` the standard deviation of the score over that of the human value.
+    """
+    return n_human / (1.0 + (1.0 - n_human / n_machine) * (c * c - 2.0 * rho * c))
+
+
+@pytest.mark.parametrize("page", ILLUSTRATED)
+def test_the_pages_illustrate_the_default_weight_with_numbers_from_the_formulas(page: str) -> None:
+    text = " ".join((DOCS / page).read_text(encoding="utf-8").split())
+    found = ILLUSTRATION.search(text)
+    assert found is not None, f"{page}: no illustration of the default weight"
+    rho, c = float(found[1]), float(found[2])
+    n_human, n_machine = int(found[3]), int(found[4])
+    assert found[7] == DEFAULT_WEIGHT_WORTH
+    assert round(plan_sample_size(rho, n_human, n_machine).factor * n_human) == int(found[5])
+    assert round(default_weight_worth(rho, c, n_human, n_machine)) == int(found[6])
 
 
 def test_plan_sample_size_refuses_out_of_range_settings() -> None:

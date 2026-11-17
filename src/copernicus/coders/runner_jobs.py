@@ -42,7 +42,8 @@ class CellPlan:
 
     Attributes:
         text_id: Identifier of the text, as a string.
-        text: The normalised text.
+        text: The text the coder sends: the text of the table, as given with its ends
+            stripped.
         text_key: Integer key of the text used for seeding.
         run_number: Number of the run, starting at 1.
         assignment: Wording and shuffle seed drawn for this text and run.
@@ -76,7 +77,8 @@ def plan_cell(
         rubric: The rubric to code.
         pool: The wording pool the rotation draws from.
         text_id: Identifier of the text, as a string.
-        text: The normalised text.
+        text: The text the coder sends: the text of the table, as given with its ends
+            stripped.
         text_key: Integer key of the text used for seeding.
         run_number: Number of the run, starting at 1.
         run_seed: Seed of the run.
@@ -196,7 +198,7 @@ def assemble_row(plan: CellPlan, results: Sequence[AttributeResult]) -> ResultRo
         results: One result per attribute, in the order of ``plan.contexts``.
 
     Returns:
-        The row; its text hash is that of ``plan.text``, the text the coder received, and
+        The row; its text hash is that of ``plan.text``, the text the coder sent, and
         its seconds and token counts are the sums over the attributes.
     """
     return ResultRow(

@@ -2,9 +2,11 @@
 
 A `RunStore` is created for a run identity: the method, model, temperature,
 seed, and rubric, every setting of the coder config, the hashes of the prompt
-templates and of the wording, the verifier, the marker shuffling, and the backend's
+templates and of the wording, the verifier, the marker shuffling, the backend's
 provenance (its kind, endpoint and the digest of the endpoint's path, quantization,
-dtypes, context window, chat-template and request options, and capability flags).
+dtypes, context window, chat-template and request options, and capability flags), and for
+the one-stage coder the level order of every marker when some marker's levels are not listed
+from 5 down to 1 (`copernicus.coders.level_orders`).
 Opening an existing file checks every one of these and fails loudly on a difference;
 only the library version may differ, which is logged. Settings a backend does not
 report, such as the vLLM version or the hardware, are not checked. What the backend
@@ -29,6 +31,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import TracebackType
 
+from copernicus.coders.level_orders import (
+    LEVEL_ORDERS_DIFFER,
+    LEVEL_ORDERS_MISSING,
+    level_orders_reason,
+)
 from copernicus.coders.rotation import DIMENSIONS, WordingPool
 from copernicus.coders.store_cells import StoredCell, delete_failed_cells, read_cells
 from copernicus.coders.store_layout import check_layout, count_rows
@@ -77,11 +84,17 @@ SHUFFLE_SQL = (
 class RunStore:
     """A SQLite file that holds the results of one run.
 
+    The store takes the identity as given: it checks that the identity carries the rubric's
+    content hash, not the entries that depend on the rubric beyond it.
+    `copernicus.coders.runner.code_texts` builds the whole identity; a caller who builds one by
+    hand for the one-stage coder adds the level orders of the rubric's markers with
+    `copernicus.coders.level_orders.level_order_settings`, as the content hash does not see them.
+
     Args:
         path: Location of the file, a ``str`` or a ``Path`` (kept as a ``Path`` in
             ``path``); created if it does not exist.
         rubric: The rubric the run codes.
-        identity: Identity of the run.
+        identity: Identity of the run, with every entry that `code_texts` would give it.
 
     Raises:
         StoreError: If the identity does not fit the rubric, if an id of the
@@ -322,7 +335,8 @@ def _insert_sql(table: str, names: Sequence[str]) -> str:
 def _check_run_info(stored: Mapping[str, str], expected: Mapping[str, str]) -> None:
     """Raise unless the stored ``run_info`` and the requested one carry the same keys and values.
 
-    The library version is exempt: a mismatch is logged, not raised.
+    The library version is exempt: a mismatch is logged, not raised. A refusal on the level
+    orders of the one-stage prompt also says why the prompt has changed and what to do.
     """
     for key, requested in expected.items():
         if key == EXEMPT_KEY:
@@ -332,11 +346,16 @@ def _check_run_info(stored: Mapping[str, str], expected: Mapping[str, str]) -> N
                 )
             continue
         if key not in stored:
-            raise StoreError(f"run_info missing {key}")
+            raise StoreError(
+                f"run_info missing {key}{level_orders_reason(key, LEVEL_ORDERS_MISSING)}"
+            )
         if stored[key] != requested:
             raise StoreError(
                 f"run_info mismatch on {key}: stored {stored[key]}, requested {requested}"
+                f"{level_orders_reason(key, LEVEL_ORDERS_DIFFER)}"
             )
     for key in stored:
         if key not in expected and key != EXEMPT_KEY:
-            raise StoreError(f"run_info unexpected {key}")
+            raise StoreError(
+                f"run_info unexpected {key}{level_orders_reason(key, LEVEL_ORDERS_DIFFER)}"
+            )

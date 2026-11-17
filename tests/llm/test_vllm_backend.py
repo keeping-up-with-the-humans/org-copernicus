@@ -18,8 +18,8 @@ from copernicus.llm import Backend, BackendInfo, GenerationRequest, VLLMBackend,
 
 OTHER_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
 VLLM_HINT = (
-    'install the vllm extra: pip install "org-copernicus[vllm]", '
-    'or pip install ".[vllm]" from the package\'s root folder'
+    'install the vllm extra: pip install ".[vllm]" from the package\'s root folder, '
+    'or pip install "org-copernicus[vllm]" once a release has been uploaded to the package index'
 )
 NO_COMMIT = (
     "pins no commit: set revision to the 40-character commit hash whose code you have reviewed"

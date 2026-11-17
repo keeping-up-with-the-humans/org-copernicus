@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import pytest
+from embeddings_support import documented_texts_hash
 from fake_runtime import (
     CLS_ID,
     FAKE_VERSIONS,
@@ -26,8 +28,8 @@ from copernicus.errors import ConfigurationError, SettingsError
 
 pytestmark = pytest.mark.embed
 EMBED_HINT = (
-    'install the embed extra: pip install "org-copernicus[embed]", '
-    'or pip install ".[embed]" from the package\'s root folder'
+    'install the embed extra: pip install ".[embed]" from the package\'s root folder, '
+    'or pip install "org-copernicus[embed]" once a release has been uploaded to the package index'
 )
 SPEC = EncoderSpec("fake", "org/fake", "mean", 6)
 TEXTS = ["a b c", " ".join(f"w{i}" for i in range(10)), "d e", " ".join(f"v{i}" for i in range(9))]
@@ -101,7 +103,7 @@ def test_the_pooling_of_the_spec_is_used(monkeypatch: pytest.MonkeyPatch, poolin
     assert np.allclose(result.vectors[0], unit(expected), atol=1e-6)
 
 
-def test_ids_are_stored_as_strings_and_the_sidecar_holds_identity_and_versions(
+def test_ids_are_stored_as_strings_and_the_sidecar_holds_identity_versions_and_texts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result = encoder_with(monkeypatch)[0].embed(["a b"], [7])
@@ -116,6 +118,8 @@ def test_ids_are_stored_as_strings_and_the_sidecar_holds_identity_and_versions(
         "padding_side": "right",
         "special_tokens_reserved": 2,
         **FAKE_VERSIONS,
+        "text_form": "as_given",
+        "texts_hash": documented_texts_hash(["a b"]),
     }
 
 
@@ -224,6 +228,56 @@ def test_empty_and_whitespace_texts_are_refused_naming_their_ids(
     with pytest.raises(ConfigurationError, match="and 2 more") as error:
         encoder.embed(many, [f"t{index}" for index in range(12)])
     assert "'t9'" in str(error.value) and "'t10'" not in str(error.value)
+
+
+class RecordingTokenizer(BatchTokenizer):
+    """The fake batch tokenizer, recording every text that it splits or batches."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: list[str] = []
+
+    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        self.seen.append(text)
+        return super().encode(text, add_special_tokens)
+
+
+# Texts of at most four words, so that each fits into one window of the fake encoder.
+AS_GIVEN = [
+    pytest.param("One\ntwo", id="line_break"),
+    pytest.param("One\ttwo", id="tab"),
+    pytest.param("One  two", id="spaces"),
+    pytest.param("One two", id="no_break_space"),
+    pytest.param("One\r\ntwo\n\nthree", id="line_breaks"),
+    pytest.param(" \tOne\ntwo  three four \n", id="mixed"),
+    pytest.param("  One two\t\n", id="padding"),
+]
+
+
+@pytest.mark.parametrize("given", AS_GIVEN)
+def test_embed_table_hands_the_encoder_each_text_as_the_table_keeps_it(
+    monkeypatch: pytest.MonkeyPatch, given: str
+) -> None:
+    tokenizer = RecordingTokenizer()
+    runtime = fake_runtime(tokenizer=tokenizer)
+    monkeypatch.setattr(Encoder, "_load", lambda self: runtime)
+    frame = pd.DataFrame({"text_id": ["a"], "text": [given], "group_id": ["g"]})
+    result = Encoder(SPEC).embed_table(TextTable.from_frame(frame))
+    assert tokenizer.seen != [] and set(tokenizer.seen) == {given.strip()}
+    assert result.sidecar["text_form"] == "as_given"
+    assert result.sidecar["texts_hash"] == documented_texts_hash([given.strip()])
+
+
+def test_the_set_records_the_form_and_the_digest_of_the_texts_it_embedded(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    encoder, _ = encoder_with(monkeypatch)
+    result = encoder.embed(TEXTS, IDS)
+    record = {"text_form": "as_given", "texts_hash": documented_texts_hash(TEXTS)}
+    assert {key: result.sidecar[key] for key in record} == record
+    result.save(tmp_path / "s")
+    loaded = EmbeddingSet.load(tmp_path / "s")
+    assert {key: loaded.sidecar[key] for key in record} == record
 
 
 def test_embed_table_keeps_the_other_columns_as_metadata(

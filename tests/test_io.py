@@ -113,6 +113,7 @@ def test_sidecars_that_differ_in_an_identity_key_are_refused_naming_each_key() -
     assert "texts" in message and "reference embeddings" in message
     assert "hf_id ('org/x' and 'org/y')" in message
     assert "padding_side ('right' and 'left')" in message and "pooling" not in message
+    assert message.endswith("; embed both sides with one encoder specification")
 
 
 def test_a_sidecar_without_an_identity_key_cannot_be_compared() -> None:

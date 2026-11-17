@@ -14,8 +14,9 @@ given; it must already be on the gold scale), the gold values ``y`` of the label
 
 with ``se(mean) = sd / sqrt(n)`` and ``se(difference) = sqrt(var_a / n_a + var_b / n_b)``
 (sample moments, divisor ``n - 1``). With ``power_tuning`` the machine terms are scaled by
-``lambda_star = cov(y, f) / var(f)`` on the labelled rows (population moments, 1 for a constant
-prediction; the helper of ``pseudo_values``)::
+``lambda_star = cov(y, f) / var(f)`` on the labelled rows (population moments; the helper of
+``pseudo_values``, which refuses a prediction that is constant on the labelled rows, where the
+ratio is undefined)::
 
     point = theta(y, lab) + lambda_star * (theta(f, all) - theta(f, lab))
     SE = sqrt(se(lambda_star * f - y, lab)^2 + lambda_star^2 * se(f, all)^2)
@@ -54,8 +55,10 @@ from copernicus.corrections._clustering import (
 from copernicus.corrections._estimate_inputs import (
     equal_probability_sample,
     group_mask,
+    long_short_split,
     prediction_values,
     require_labelled,
+    require_labelled_sides,
 )
 from copernicus.corrections.data import CorrectionData
 from copernicus.corrections.families._registry import FamilySpec, register
@@ -153,12 +156,18 @@ def make_estimate(
 
 
 def _parts(values: np.ndarray, split: np.ndarray | None, minimum: int) -> list[np.ndarray]:
-    """The values, or the values of the two groups, each with at least ``minimum`` entries."""
+    """The values, or the values on two sides, each with at least ``minimum`` entries."""
     parts = [values] if split is None else [values[split], values[~split]]
     sizes = [int(part.size) for part in parts]
     if min(sizes) < minimum:
+        if split is None:
+            raise EstimatorError(
+                f"the estimand needs at least {minimum} values; there are {sizes[0]}; "
+                "provide more values"
+            )
         raise EstimatorError(
-            f"the estimand needs at least {minimum} values in each group; the groups hold {sizes}"
+            f"the estimand needs at least {minimum} values on each side; the sides hold {sizes}; "
+            "provide more values on the side with too few, or choose another grouping"
         )
     return parts
 
@@ -168,13 +177,13 @@ def plugin_value(values: np.ndarray, split: np.ndarray | None = None) -> float:
 
     Args:
         values: One value per text.
-        split: ``None`` for the mean, or a boolean mask of the first group.
+        split: ``None`` for the mean, or a boolean mask of the first side.
 
     Returns:
         The plug-in value of the estimand.
 
     Raises:
-        EstimatorError: If a group is empty.
+        EstimatorError: If there are no values, or a side holds none.
     """
     parts = _parts(values, split, 1)
     if split is None:
@@ -187,32 +196,16 @@ def naive_se(values: np.ndarray, split: np.ndarray | None = None) -> float:
 
     Args:
         values: One value per text.
-        split: ``None`` for the mean, or a boolean mask of the first group.
+        split: ``None`` for the mean, or a boolean mask of the first side.
 
     Returns:
         ``sd / sqrt(n)``, or ``sqrt(var_a / n_a + var_b / n_b)``, with sample moments.
 
     Raises:
-        EstimatorError: If a group holds fewer than two values.
+        EstimatorError: If there are fewer than two values, or a side holds fewer than two.
     """
     parts = _parts(values, split, 2)
     return float(np.sqrt(sum(np.var(part, ddof=1) / part.size for part in parts)))
-
-
-def long_short_split(data: CorrectionData) -> np.ndarray:
-    """The texts whose covariate lies strictly above its median: the long half.
-
-    With the default covariate (the log of the character count) the mask marks the longer
-    texts; texts at the median count as short.
-
-    Args:
-        data: The correction data.
-
-    Returns:
-        A boolean array in data order.
-    """
-    covariate = data.covariate
-    return np.asarray(covariate > np.median(covariate), dtype=bool)
 
 
 def _term_se(values: np.ndarray, split: np.ndarray | None, groups: np.ndarray | None) -> float:
@@ -238,7 +231,11 @@ def _ppi(
     gold = data.gold[labelled]
     predicted = values[labelled]
     labelled_split = None if split is None else split[labelled]
-    lambda_star = tuning_coefficient(predicted, gold) if power_tuning else 1.0
+    lambda_star = (
+        tuning_coefficient(predicted, gold, purpose=f"{method} with the prediction {name!r}")
+        if power_tuning
+        else 1.0
+    )
     plugin = plugin_value(values, split)
     predicted_value = plugin_value(predicted, labelled_split)
     gold_value = plugin_value(gold, labelled_split)
@@ -308,8 +305,9 @@ def mean_ppi(
         SettingsError: If ``cluster`` is not a boolean or ``None``.
         ConfigurationError: If the prediction does not cover every text with a finite value.
         EstimatorError: If fewer than two texts are labelled, ``pi`` is missing, not finite
-            or not the same on the labelled rows, or the estimate clusters and the texts or
-            the labelled texts hold fewer than two groups.
+            or not the same on the labelled rows, the estimate clusters and the texts or the
+            labelled texts hold fewer than two groups, or ``power_tuning`` is set and the
+            prediction is constant on the labelled rows, where ``lambda_star`` is undefined.
     """
     method = "ppi_mean_tuned" if power_tuning else "ppi_mean"
     require_labelled(data.n_labelled, MIN_LABELLED_PER_GROUP, "the prediction-powered mean")
@@ -360,17 +358,17 @@ def group_difference_ppi(
     Raises:
         SettingsError: If ``cluster`` is not a boolean or ``None``.
         ConfigurationError: If the grouping or the prediction does not match the data.
-        EstimatorError: If a group holds fewer than two labelled texts, ``pi`` is missing, not
-            finite or not the same on the labelled rows, or the estimate clusters and the texts,
-            the labelled texts or the labelled texts of one side hold fewer than two groups.
+        EstimatorError: If a side holds fewer than two labelled texts, ``pi`` is missing, not
+            finite or not the same on the labelled rows, the estimate clusters and the texts,
+            the labelled texts or the labelled texts of one side hold fewer than two groups, or
+            ``power_tuning`` is set and the prediction is constant on the labelled rows of both
+            sides together, where ``lambda_star`` is undefined.
     """
     method = "ppi_difference_tuned" if power_tuning else "ppi_difference"
     mask = group_mask(data, group)
     labelled = data.labelled_mask
     counts = (int((labelled & mask).sum()), int((labelled & ~mask).sum()))
-    require_labelled(
-        min(counts), MIN_LABELLED_PER_GROUP, "the prediction-powered difference", " in each group"
-    )
+    require_labelled_sides(counts, MIN_LABELLED_PER_GROUP, "the prediction-powered difference")
     equal_probability_sample(data, "the prediction-powered difference")
     clustering = resolve_cluster(data, labelled, cluster, split=mask)
     values, name = prediction_values(data, prediction)
