@@ -55,6 +55,7 @@ def one_vector_per_chunk(
     encoder: Encoder,
     runtime: EncoderRuntime,
     fragments: list[str],
+    labels: list[str],
     checkpoint: Path | None,
     checkpoint_every: int,
 ) -> tuple[np.ndarray, np.ndarray]:

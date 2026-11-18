@@ -6,16 +6,27 @@ groups chooses the score column (the best signed Spearman correlation with the g
 that half), and the line ``gold ~ 1 + score + covariate`` is fitted on all the permitted rows
 and predicts every row of the fold. A row is therefore never predicted by a model that saw
 its own gold value or the gold value of any text of its group.
+
+The line of a fold is the solution that ``numpy.linalg.lstsq`` with ``rcond=None`` returns: it
+leaves out the directions of the design below its cutoff and returns the coefficients of smallest
+norm of what remains. A fold whose permitted rows give the design ``[1, score, covariate]`` a
+numerical rank below 3, as ``lstsq`` returns it, is named in the result of ``crossfit_ghat``,
+which logs one warning per call that names such folds; within ``repeated_study`` that warning is
+counted instead, and the study sums such warnings up per size (``_open_cases``). The rank is below
+3 for a design that is rank-deficient in exact arithmetic, whose rows many lines fit equally well,
+and also for a design of full rank with a direction below the cutoff.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
 from copernicus.baseline.folds import rng_for
+from copernicus.corrections._open_cases import warn_rank_deficient_folds
 from copernicus.corrections.crossfit import inner_splits
 from copernicus.corrections.data import CorrectionData, best_score_column
 from copernicus.errors import EstimatorError
@@ -26,6 +37,7 @@ __all__ = [
     "FOLD_TOO_THIN",
     "INNER_GROUPS_BELOW_K",
     "NESTED_SELECTION_HALF_DEGENERATE",
+    "CrossfitPredictions",
     "crossfit_ghat",
 ]
 
@@ -35,6 +47,23 @@ NESTED_SELECTION_HALF_DEGENERATE = "nested_selection_half_degenerate"
 DESIGN_PARAMETERS = 3
 MIN_PERMITTED_ROWS = DESIGN_PARAMETERS + 1
 MIN_SELECTION_GROUPS = 2
+
+
+@dataclass(frozen=True, eq=False)
+class CrossfitPredictions:
+    """The out-of-fold prediction of every row, with what each fold chose and fitted.
+
+    Attributes:
+        ghat: The prediction of every row, in data order.
+        columns: The score column each fold chose, in fold order.
+        rank_deficient_folds: The folds, in order, whose design ``[1, score, covariate]`` has a
+            numerical rank below 3 on their permitted rows, as ``numpy.linalg.lstsq`` with
+            ``rcond=None`` returns it; empty when that rank is 3 for every fold.
+    """
+
+    ghat: np.ndarray
+    columns: tuple[str, ...]
+    rank_deficient_folds: tuple[int, ...]
 
 
 def _selection_half(
@@ -67,12 +96,15 @@ def _selection_half(
     return permitted[np.isin(groups[permitted], chosen)]
 
 
-def crossfit_ghat(data: CorrectionData, *, k: int, seed: int) -> tuple[np.ndarray, tuple[str, ...]]:
+def crossfit_ghat(data: CorrectionData, *, k: int, seed: int) -> CrossfitPredictions:
     """Out-of-fold predictions of the gold value for every row.
 
     The inner folds and the selection halves come from one generator,
     ``rng_for(seed, "pseudo", "crossfit", k)``, so the result is a function of the data,
-    ``k`` and ``seed``.
+    ``k`` and ``seed``. A fold whose design ``[1, score, covariate]`` has a numerical rank below
+    3 on its permitted rows, as ``numpy.linalg.lstsq`` with ``rcond=None`` returns it, keeps the
+    coefficients that ``lstsq`` returns (see the module docstring); such folds are named in the
+    result, and one warning that names them is logged.
 
     Args:
         data: The correction data; the labelled rows carry the gold values.
@@ -80,7 +112,8 @@ def crossfit_ghat(data: CorrectionData, *, k: int, seed: int) -> tuple[np.ndarra
         seed: Seed of the generator.
 
     Returns:
-        The predictions, one per row in data order, and the score column each fold chose.
+        The predictions, one per row in data order, the score column each fold chose and the
+        folds whose design has a numerical rank below 3.
 
     Raises:
         EstimatorError: With the reason ``inner_groups_below_k`` (fewer groups than ``k``),
@@ -103,6 +136,7 @@ def crossfit_ghat(data: CorrectionData, *, k: int, seed: int) -> tuple[np.ndarra
     covariate = data.covariate
     ghat = np.full(data.n, np.nan)
     chosen_columns: list[str] = []
+    deficient: list[tuple[int, int]] = []
     for fold, (train, test) in enumerate(folds):
         permitted = train[labelled[train]]
         if permitted.size < MIN_PERMITTED_ROWS:
@@ -115,13 +149,21 @@ def crossfit_ghat(data: CorrectionData, *, k: int, seed: int) -> tuple[np.ndarra
         column = _select_column(scores, gold, selection, fold)
         score = scores[column].to_numpy(dtype=float)
         design = np.column_stack([np.ones(data.n), score, covariate])
-        beta, *_ = np.linalg.lstsq(design[permitted], gold[permitted], rcond=None)
+        beta, _, rank, _ = np.linalg.lstsq(design[permitted], gold[permitted], rcond=None)
+        if rank < DESIGN_PARAMETERS:
+            deficient.append((fold, int(rank)))
         ghat[test] = design[test] @ beta
         chosen_columns.append(column)
+    if deficient:
+        warn_rank_deficient_folds(logger, deficient, k, DESIGN_PARAMETERS)
     logger.debug(
         "cross-fitted predictions over %d folds, columns %s", k, sorted(set(chosen_columns))
     )
-    return ghat, tuple(chosen_columns)
+    return CrossfitPredictions(
+        ghat=ghat,
+        columns=tuple(chosen_columns),
+        rank_deficient_folds=tuple(fold for fold, _ in deficient),
+    )
 
 
 def _select_column(scores: pd.DataFrame, gold: np.ndarray, selection: np.ndarray, fold: int) -> str:

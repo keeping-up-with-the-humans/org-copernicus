@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 import numpy as np
 import pytest
-from estimates_support import CLASSICAL_SLOPE, classical_data
+from estimates_support import (
+    CLASSICAL_SLOPE,
+    SPARSE_BOOT,
+    SPARSE_SEED,
+    classical_data,
+    replay,
+    sparse_covariation_data,
+)
 
 from copernicus.corrections import CorrectionData, Estimate, oriv
 from copernicus.corrections.estimates_oriv import WEAK_INSTRUMENT_FLOOR, stacked_2sls
@@ -136,6 +146,20 @@ def test_a_shared_error_shows_in_the_diagnostic() -> None:
     data = classical_data(4, error_a=0.4, error_b=0.4, shared=0.6)
     estimate = oriv(data, "outcome", score_a="score_a", score_b="score_b")
     assert estimate.details["shared_error_correlation"] > 0.3
+    assert estimate.details["shared_error_correlation_status"] == "ok"
+
+
+def test_a_missing_shared_error_correlation_carries_its_reason() -> None:
+    # The first measurement is an exact line of the gold values on the labelled texts, so its
+    # residual on them is constant and no correlation of the two residuals is defined.
+    data = classical_data(4, n_texts=400, n_labelled=100)
+    frame = data.frame.copy()
+    labelled = data.labelled_mask
+    frame.loc[labelled, "score_a"] = 0.5 + 2.0 * frame.loc[labelled, "gold"]
+    exact = CorrectionData(frame=frame, score_columns=("score_a", "score_b"))
+    details = oriv(exact, "outcome", score_a="score_a", score_b="score_b", n_boot=60).details
+    assert np.isnan(details["shared_error_correlation"])
+    assert details["shared_error_correlation_status"] == "constant_residual"
 
 
 def test_a_weak_pair_is_refused_at_the_floor() -> None:
@@ -182,3 +206,93 @@ def test_oriv_checks_its_measurements() -> None:
             score_a="score_a",
             score_b="score_b",
         )
+
+
+def _two(data: CorrectionData, **options: Any) -> Estimate:
+    """ORIV of the outcome with the two score columns."""
+    return oriv(data, "outcome", score_a="score_a", score_b="score_b", **options)
+
+
+def test_the_default_still_refuses_fewer_than_50_defined_resamples() -> None:
+    data = sparse_covariation_data(0)
+    _, values = replay("oriv", data, seed=SPARSE_SEED, n_boot=SPARSE_BOOT)
+    with pytest.raises(EstimatorError) as refusal:
+        _two(data, n_boot=SPARSE_BOOT, seed=SPARSE_SEED)
+    assert str(refusal.value) == (
+        f"only {len(values)} of {SPARSE_BOOT} bootstrap resamples have a defined estimate; the "
+        "standard error needs at least 50"
+    )
+
+
+def test_a_floor_of_10_takes_the_deviation_of_exactly_the_defined_resamples() -> None:
+    data = sparse_covariation_data(0)
+    _, values = replay("oriv", data, seed=SPARSE_SEED, n_boot=SPARSE_BOOT)
+    assert 10 <= len(values) < SPARSE_BOOT / 2
+    estimate = _two(data, n_boot=SPARSE_BOOT, seed=SPARSE_SEED, min_defined=10)
+    assert estimate.se == pytest.approx(float(np.std(values, ddof=1)), rel=1e-12)
+    assert estimate.ci_high == pytest.approx(estimate.point + 1.96 * estimate.se, rel=1e-12)
+    details = estimate.details
+    assert (details["n_boot"], details["n_boot_defined"], details["n_boot_undefined"]) == (
+        SPARSE_BOOT,
+        len(values),
+        SPARSE_BOOT - len(values),
+    )
+    assert (details["min_defined"], details["below_floor"], details["se_status"]) == (
+        10,
+        "refuse",
+        "ok",
+    )
+
+
+def test_below_the_floor_the_point_is_kept_without_an_interval(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    data = sparse_covariation_data(0)
+    point, values = replay("oriv", data, seed=SPARSE_SEED, n_boot=SPARSE_BOOT)
+    with caplog.at_level(logging.WARNING, logger="copernicus"):
+        kept = _two(data, n_boot=SPARSE_BOOT, seed=SPARSE_SEED, below_floor="point")
+    [warning] = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert warning.levelno == logging.WARNING
+    assert warning.name == "copernicus.corrections.estimates_oriv"
+    message = warning.getMessage()
+    assert message.startswith(f"oriv: only {len(values)} of {SPARSE_BOOT} bootstrap resamples")
+    assert "fewer than the 50" in message
+    reached = _two(data, n_boot=SPARSE_BOOT, seed=SPARSE_SEED, min_defined=10)
+    assert kept.point == reached.point == pytest.approx(point, rel=1e-12)
+    assert np.isnan(kept.se) and np.isnan(kept.ci_low) and np.isnan(kept.ci_high)
+    assert kept.details["sandwich_se"] == reached.details["sandwich_se"] > 0.0
+    details = kept.details
+    assert (details["n_boot"], details["n_boot_defined"], details["n_boot_undefined"]) == (
+        SPARSE_BOOT,
+        len(values),
+        SPARSE_BOOT - len(values),
+    )
+    assert (details["min_defined"], details["below_floor"], details["se_status"]) == (
+        50,
+        "point",
+        "too_few_defined",
+    )
+
+
+def test_the_floor_and_the_rule_below_it_are_checked() -> None:
+    data = classical_data(2, n_texts=200, n_labelled=40)
+    for floor in (1, 0, True, 10.0, "10"):
+        with pytest.raises(SettingsError, match="min_defined must be an integer of at least 2"):
+            _two(data, n_boot=60, min_defined=floor)
+    with pytest.raises(SettingsError, match="n_boot must be an integer of at least 61; got 60"):
+        _two(data, n_boot=60, min_defined=61)
+    with pytest.raises(SettingsError, match="n_boot must be an integer of at least 10; got 9"):
+        _two(data, n_boot=9, min_defined=10)
+    for rule in ("pont", "Point", None, 1):
+        with pytest.raises(SettingsError, match="below_floor must be 'refuse' or 'point'"):
+            _two(data, below_floor=rule)
+    accepted = _two(data, n_boot=10, min_defined=10)
+    assert (accepted.details["n_boot"], accepted.details["min_defined"]) == (10, 10)
+    assert accepted.details["se_status"] == "ok" and np.isfinite(accepted.se)
+    defaults = _two(data).details
+    assert list(defaults)[-4:] == ["min_defined", "below_floor", "se_status", "se_exactly_zero"]
+    assert (defaults["min_defined"], defaults["below_floor"], defaults["se_status"]) == (
+        50,
+        "refuse",
+        "ok",
+    )

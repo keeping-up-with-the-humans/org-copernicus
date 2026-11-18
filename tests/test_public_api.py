@@ -176,6 +176,13 @@ def test_the_package_ships_its_type_marker() -> None:
     assert (Path(copernicus.__file__).parent / "py.typed").is_file()
 
 
+def test_the_baseline_and_the_corrections_export_the_names_of_their_newest_additions() -> None:
+    baseline = importlib.import_module("copernicus.baseline")
+    corrections = importlib.import_module("copernicus.corrections")
+    assert {"BaselineSplits", "read_splits", "write_splits"} <= set(baseline.__all__)
+    assert {"text_count_variation", "TEXT_COUNT_VARIATION_THRESHOLD"} <= set(corrections.__all__)
+
+
 def test_every_package_defines_a_resolvable_all() -> None:
     packages = all_packages()
     assert {package.__name__ for package in packages} >= {

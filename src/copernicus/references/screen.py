@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import re
 from typing import Any
 
@@ -83,7 +84,8 @@ def screen_report(frame: pd.DataFrame) -> dict[str, Any]:
         frame: A table with ``screened_out`` and ``screen_reason``, from `screen_texts`.
 
     Returns:
-        ``n_texts``, ``n_screened_out``, ``share_screened_out`` (0.0 for an empty table),
+        ``n_texts``, ``n_screened_out``, ``share_screened_out`` (NaN for an empty table,
+        which has no share),
         and ``by_term``: the number of texts screened out for each term, most frequent
         first.
     """
@@ -98,6 +100,6 @@ def screen_report(frame: pd.DataFrame) -> dict[str, Any]:
     return {
         "n_texts": n_texts,
         "n_screened_out": len(flagged),
-        "share_screened_out": len(flagged) / n_texts if n_texts else 0.0,
+        "share_screened_out": len(flagged) / n_texts if n_texts else math.nan,
         "by_term": ordered,
     }

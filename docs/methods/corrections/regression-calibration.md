@@ -8,7 +8,7 @@ The library has four calibrators, ordered by how many human-coded texts they nee
 
 1. **Score column.** On the training rows the family takes the score column with the highest signed Spearman correlation with the gold values.
 2. **Fit**, by variant:
-    - `linear`: the least-squares line `gold ~ 1 + score`. A score that is constant on the training rows is refused.
+    - `linear`: the least-squares line `gold ~ 1 + score`. A score that is constant on the training rows is refused, and so is a score for which the design of intercept and score has a numerical rank below 2, as `numpy.linalg.lstsq` with `rcond=None` returns it for the two columns as they are: a score whose values are very large beside 1 (a standard deviation of 1e16 around 0) or vary very little beside their mean (a mean of 1e8 with a standard deviation of 1). Centre such a score and rescale it to a spread near 1. A design of rank 2 is fitted; the rank does not certify the accuracy of a line fitted to values that are very large beside their spread.
     - `covariate_augmented`: the least-squares fit `gold ~ 1 + score + covariate`, with the data's covariate (the log of the character count by default). A design of less than full rank, such as a constant covariate, is refused.
     - `platt`: scikit-learn's logistic regression, with its default L2 penalty (`C = 1`) and up to 1000 iterations, of the larger of the two gold values on the score. The predicted probability `p` is placed on the gold scale as `low + p * (high - low)`, which is `p` itself for 0 and 1. It applies only when the labelled gold takes exactly two values, and `fit` refuses training texts whose gold takes another number of values with `NotApplicableError` and the reason of `applies`.
     - `isotonic`: scikit-learn's isotonic regression of the gold on the score, a monotone piecewise-linear map. The fit is non-decreasing over the training scores, a score between two of them gets the linearly interpolated value, and a score outside the training range gets the value at the nearer end.
@@ -95,6 +95,8 @@ A line fitted once keeps the order of the scores exactly. On the gold's own scal
 ## Where the library departs from the paper's analysis code
 
 - The `platt` variant maps the class probability onto the gold scale, `low + p * (high - low)`, so it works for any two gold values; for a gold coded 0 and 1 this is the probability, as in the paper's analysis code.
+- The line of `linear`, which the calibrated pseudo-values, the anchor of latent pooling and the embedding-augmented calibration fit as well, is refused when the design of intercept and score has a numerical rank below 2 although the score varies, as `numpy.linalg.lstsq` with `rcond=None` returns it. The paper's analysis code took the coefficients of smallest norm that `lstsq` returns for such a design, which need not be the least-squares line: for a score of mean 1e8 and standard deviation 1 it is a line that nearly passes through the origin. When both accept a design of numerical rank 2, they compute the same line.
+- A score counts as constant, and gets no line, when its range is at most `1e-12` times the larger of 1 and its largest absolute value; the paper's analysis code refused a score only when its range was exactly 0.
 
 ## Literature
 

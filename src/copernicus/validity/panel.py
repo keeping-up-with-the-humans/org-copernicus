@@ -85,7 +85,8 @@ class PanelSettings:
             the gold column, scored or not, must carry the same value. The unit refuses a
             scored text with a gold value whose run-averaged score is not finite (no run with a
             score, or finite run scores whose average overflows) or whose covariate is missing
-            or not finite, which the text unit drops and counts. Under either unit a score row
+            or not finite, which the text unit drops and counts, and a mean over a group's
+            texts that overflows although their values are finite. Under either unit a score row
             of such a text without a run number, or with an infinite score, stops the panel, an
             infinite score before the runs are averaged.
     """
@@ -252,7 +253,12 @@ def validity_panel(
     before the target's runs are averaged per text, a missing run number before any metric is
     computed; the message names the target, the text and, where the table has groups, its
     group. Run numbers keep the values the frame gives them. Gold and covariate
-    columns must be numeric. Text ids are compared as strings. Clusters of the bootstrap
+    columns must be numeric. Under either unit the panel refuses a finite value above
+    `copernicus.coders.MAX_ABSOLUTE_VALUE` (1e150) in absolute value: a score in the rows a
+    target is built from, before they are averaged and also of a text without gold, and, before
+    any metric, a value anywhere in a gold column that a target names or in the covariate
+    column. A sum of values up to the limit is finite, so no mean of the panel's inputs
+    overflows. Text ids are compared as strings. Clusters of the bootstrap
     are the table's ``group_id`` (the text ids themselves without a table, which then
     needs a ``covariate`` column).
 
@@ -268,8 +274,10 @@ def validity_panel(
     score for. A group that holds a text scored for the target with a finite gold value and
     whose texts carry two gold values, a scored text with a gold value whose run-averaged score
     is not finite (no run with a score, or finite run scores whose average overflows) or whose
-    covariate is missing or not finite (under ``"text"`` such a text is dropped and counted),
-    and group ids that merge or split when written as text stop the panel; an infinite score
+    covariate is missing or not finite (under ``"text"`` such a text is dropped and counted,
+    with one warning that names the texts whose average overflows), a group whose mean score
+    or mean covariate overflows although the values of its texts are finite, and group ids
+    that merge or split when written as text stop the panel; an infinite score
     stops it under either unit, as said above.
 
     The output has one row per target, in the order of ``targets``, with the columns:
@@ -313,14 +321,19 @@ def validity_panel(
             covariate, a reliability mapping naming a column that no target uses, or a scored
             text with a finite gold value with an infinite score or a score row without a run
             number (the message names the target, the text and, where the table has groups,
-            its group); and under ``unit="group"`` no
+            its group), or a score, a gold value or a covariate value above the limit in
+            absolute value (the message names the target of a score or the column of a gold or
+            covariate value, the texts, the largest absolute value and the limit); and under
+            ``unit="group"`` no
             table, a table without a group column, group ids that merge or split when written
             as text (the message names both ids and their types), a group that holds a text
             scored for the target with a finite gold value and whose texts carry two gold
-            values (scored or not), or a scored text with a gold value whose run-averaged score
+            values (scored or not), a scored text with a gold value whose run-averaged score
             is not finite (no run with a score, or finite run scores whose average overflows)
             or whose covariate is missing or not finite (the message names the target, the
-            group and the text).
+            group and the text), or a group whose mean score, mean score in a run of its noise
+            or mean covariate is not finite although the values of its texts are (the message
+            names the target and the group).
         EstimatorError: If a bootstrap metric is undefined on more than 10 percent of the
             replicates; the message starts with the target name. The error stops the whole
             panel, so leave such a target out (for example one whose binary gold has a rare

@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, NoReturn
 
 import numpy as np
 
@@ -20,6 +20,7 @@ from copernicus.embeddings._loading import (
     check_transformers_line,
     loading,
 )
+from copernicus.embeddings._pass_checks import refuse_windows_without_token, unit_rows
 from copernicus.embeddings.checkpoint import (
     checkpoint_file,
     fragments_fingerprint,
@@ -39,7 +40,6 @@ EXTRA_HINT = (
     'install the embed extra: pip install ".[embed]" from the package\'s root folder, '
     'or pip install "org-copernicus[embed]" once a release has been uploaded to the package index'
 )
-NORM_FLOOR = 1e-12
 CHECKPOINT_EVERY = 2048
 
 
@@ -81,12 +81,6 @@ def _import_required(name: str) -> ModuleType:
         return importlib.import_module(name)
     except ImportError as error:
         raise ConfigurationError(f"{name} is not installed; {EXTRA_HINT}") from error
-
-
-def _unit_rows(matrix: np.ndarray) -> np.ndarray:
-    """Scale every row to unit length; an all-zero row stays zero."""
-    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-    return matrix / np.where(norms < NORM_FLOOR, 1.0, norms)
 
 
 class Encoder:
@@ -230,12 +224,19 @@ class Encoder:
                 named), the installed transformers is not below the ``transformers_below``
                 of the specification (checked before the model is downloaded or loaded), the
                 tokenizer or the model fails to load (the message says what was being
-                loaded, and the original error stays in the traceback), or a checkpoint
-                belongs to other texts, another encoder, or another commit of the model (the
-                default branch of its repository moved).
+                loaded, and the original error stays in the traceback), a checkpoint
+                belongs to other texts, another encoder, another commit of the model (the
+                default branch of its repository moved) or another pooling rule, or holds a
+                token count that is not finite or is negative, the tokenizer turns a window into
+                no token (checked before the model runs on its batch, and for the windows of
+                a checkpoint before the first batch; the message counts every such text and
+                names the first ten), or a text vector or the pooled vector of a window is
+                shorter than 1e-12 or has a length that is not finite (the first ten such
+                texts are named).
             SettingsError: If ``checkpoint_every`` is below 1.
         """
         check_embedding_request(texts, ids, checkpoint_every)
+        labels = [str(text_id) for text_id in ids]
         runtime = self._load()
         fragments: list[str] = []
         owner: list[int] = []
@@ -246,20 +247,23 @@ class Encoder:
             fragments.extend(pieces)
             owner.extend([index] * len(pieces))
         logger.info("embedding %d texts as %d chunks", len(texts), len(fragments))
-        raw, weight = self._pool_fragments(runtime, fragments, checkpoint, checkpoint_every)
+        owners = [labels[index] for index in owner]
+        raw, weight = self._pool_fragments(runtime, fragments, owners, checkpoint, checkpoint_every)
         chunk_owner = np.asarray(owner, dtype=np.int64)
         total = np.zeros((len(texts), raw.shape[1]), dtype=np.float64)
-        np.add.at(total, chunk_owner, raw * weight[:, None])
         text_weight = np.zeros(len(texts), dtype=np.float64)
         np.add.at(text_weight, chunk_owner, weight)
-        if np.any(text_weight <= 0):
-            raise ConfigurationError(
-                f"{int((text_weight <= 0).sum())} texts have no attended token"
-            )
+        # A weighted sum that overflows or meets a value that is not finite gives a vector
+        # that unit_rows refuses by its text, so numpy's own warning is not raised first.
+        with np.errstate(over="ignore", invalid="ignore"):
+            np.add.at(total, chunk_owner, raw * weight[:, None])
+            means = total / text_weight[:, None]
+        vectors = unit_rows(means, labels, windows=False)
+        chunk_vectors = unit_rows(raw, owners, windows=True)
         result = EmbeddingSet(
-            ids=np.asarray([str(text_id) for text_id in ids]),
-            vectors=_unit_rows(total / text_weight[:, None]).astype(np.float32),
-            chunk_vectors=_unit_rows(raw).astype(np.float32),
+            ids=np.asarray(labels),
+            vectors=vectors.astype(np.float32),
+            chunk_vectors=chunk_vectors.astype(np.float32),
             chunk_owner=chunk_owner,
             chunk_weight=weight,
             encoder=self.spec.name,
@@ -300,6 +304,7 @@ class Encoder:
         self,
         runtime: EncoderRuntime,
         fragments: list[str],
+        labels: list[str],
         checkpoint: Path | None,
         checkpoint_every: int,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -307,7 +312,10 @@ class Encoder:
 
         Fragments are batched in order of length, so a batch is padded to its neighbours
         and not to the longest fragment overall. Finished fragments of an earlier run are
-        read from the checkpoint and skipped.
+        read from the checkpoint and skipped. A fragment without an attended token stops the
+        pass before the model runs on its batch, or before the first batch when the
+        checkpoint holds one, so every fragment returned has a positive token count;
+        ``labels`` gives the text id of every fragment for the message.
         """
         n_fragments = len(fragments)
         fingerprint = fragments_fingerprint(
@@ -324,10 +332,16 @@ class Encoder:
             logger.info("resuming: %d of %d chunks are finished", len(done), n_fragments)
         order = np.argsort([len(fragment) for fragment in fragments], kind="stable")
         pending = order[~finished[order]]
+        if np.any(finished & (weight == 0)):
+            self._refuse_windows(runtime, fragments, labels, finished & (weight == 0), pending)
         since_write = 0
         for start in range(0, len(pending), self.batch_size):
             batch = pending[start : start + self.batch_size]
-            pooled, counts = self._pool_batch(runtime, [fragments[i] for i in batch])
+            inputs, counts = self._tokenise(runtime, [fragments[i] for i in batch])
+            if np.any(counts == 0):
+                resumed = finished & (weight == 0)
+                self._refuse_windows(runtime, fragments, labels, resumed, pending[start:])
+            pooled = self._pool_batch(runtime, inputs)
             if raw is None:
                 raw = np.zeros((n_fragments, pooled.shape[1]), dtype=np.float64)
             raw[batch], weight[batch], finished[batch] = pooled, counts, True
@@ -341,11 +355,28 @@ class Encoder:
             raise ConfigurationError("no chunk was embedded")
         return raw, weight
 
-    def _pool_batch(
-        self, runtime: EncoderRuntime, batch: list[str]
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """Run one forward pass; return the raw pooled vectors and the attended token counts."""
-        torch = runtime.torch
+    def _refuse_windows(
+        self,
+        runtime: EncoderRuntime,
+        fragments: list[str],
+        labels: list[str],
+        resumed: np.ndarray,
+        rest: np.ndarray,
+    ) -> NoReturn:
+        """Stop the pass, naming every text that has a fragment without an attended token.
+
+        ``resumed`` marks the fragments of the checkpoint without an attended token; ``rest``
+        holds the fragments still to embed, which are tokenised without running the model.
+        """
+        empty = np.flatnonzero(resumed).tolist()
+        for start in range(0, len(rest), self.batch_size):
+            batch = rest[start : start + self.batch_size]
+            _, counts = self._tokenise(runtime, [fragments[i] for i in batch])
+            empty.extend(batch[counts == 0].tolist())
+        refuse_windows_without_token(self.spec.pooling, [labels[i] for i in sorted(empty)])
+
+    def _tokenise(self, runtime: EncoderRuntime, batch: list[str]) -> tuple[Any, np.ndarray]:
+        """Tokenise one batch; return the inputs of the model and the attended token counts."""
         inputs = runtime.tokenizer(
             batch,
             padding=True,
@@ -353,11 +384,13 @@ class Encoder:
             max_length=self.spec.max_tokens,
             return_tensors="pt",
         ).to(runtime.device)
+        counts = inputs["attention_mask"].sum(dim=1)
+        return inputs, counts.cpu().to(runtime.torch.float64).numpy()
+
+    def _pool_batch(self, runtime: EncoderRuntime, inputs: Any) -> np.ndarray:
+        """Run one forward pass on a tokenised batch; return the raw pooled vectors."""
+        torch = runtime.torch
         with torch.no_grad():
             hidden = runtime.model(**inputs).last_hidden_state
             pooled = runtime.pool(hidden, inputs["attention_mask"])
-        counts = inputs["attention_mask"].sum(dim=1)
-        return (
-            pooled.cpu().to(torch.float64).numpy(),
-            counts.cpu().to(torch.float64).numpy(),
-        )
+        return pooled.cpu().to(torch.float64).numpy()

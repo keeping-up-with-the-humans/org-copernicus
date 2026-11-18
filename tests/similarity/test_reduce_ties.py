@@ -134,30 +134,55 @@ def test_a_matrix_without_equal_rows_keeps_every_score_of_the_decomposition(
     )
 
 
-def assert_kept_apart(matrix: np.ndarray, pairs: list[tuple[int, int]]) -> None:
+@pytest.fixture(params=[False, True], ids=["scores_as_decomposed", "scores_marked_by_row"])
+def marked(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> bool:
+    """Run a test twice: on the scores as the decomposition gives them, and marked by row.
+
+    Marked, the decomposition adds 1e-9 times its row number to the score of every row. Two
+    rows then never get one score, whatever the rounding of the numerical library, so a
+    reduction that grouped two rows by their bytes wrongly can be told from one that keeps
+    them apart. Unmarked, the scores of two nearly equal rows differ in their last bits or
+    not at all, by that rounding, and a reduction that grouped rows by their scores, rounded
+    or not, is told from one that returns each row the score of the decomposition.
+    """
+    if request.param:
+        from sklearn.decomposition import PCA
+
+        original = PCA.fit_transform
+
+        def with_row_marks(self: PCA, values: np.ndarray, y: object = None) -> np.ndarray:
+            scores: np.ndarray = original(self, values, y)
+            return scores + 1e-9 * np.arange(scores.shape[0], dtype=scores.dtype)[:, None]
+
+        monkeypatch.setattr(PCA, "fit_transform", with_row_marks)
+    return bool(request.param)
+
+
+def assert_kept_apart(matrix: np.ndarray, pairs: list[tuple[int, int]], marked: bool) -> None:
     """Assert that both rows of every pair keep the scores of the decomposition.
 
-    The decomposition must give some pair two scores; otherwise a reduction that grouped the
-    pairs could not be told from one that keeps them apart.
+    With the scores marked by their rows every pair has two scores. Without the marks no pair
+    has to: the comparison is then with whatever the decomposition returned in this run.
     """
     expected = decomposition(matrix)
-    assert any(np.unique(bits(expected[[a, b]])).size == 2 for a, b in pairs)
+    if marked:
+        assert all(np.unique(bits(expected[[a, b]])).size == 2 for a, b in pairs)
     rows = [row for pair in pairs for row in pair]
     np.testing.assert_array_equal(
         bits(reduce_matrix(matrix, "pca", "m")[rows]), bits(expected[rows])
     )
 
 
-def test_rows_that_differ_in_one_bit_keep_their_own_scores() -> None:
+def test_rows_that_differ_in_one_bit_keep_their_own_scores(marked: bool) -> None:
     matrix = plain_matrix(120, 30, seed=7)
     pairs = [(row, row + 60) for row in range(10, 20)]
     for (first, second), column in zip(pairs, (0, 0, 3, 7, 11, 15, 19, 23, 27, 29), strict=True):
         matrix[second] = matrix[first]
         matrix[second, column] = np.nextafter(matrix[first, column], np.inf)
-    assert_kept_apart(matrix, pairs)
+    assert_kept_apart(matrix, pairs, marked)
 
 
-def test_rows_equal_only_after_standardisation_keep_their_own_scores() -> None:
+def test_rows_equal_only_after_standardisation_keep_their_own_scores(marked: bool) -> None:
     from sklearn.preprocessing import StandardScaler
 
     matrix = plain_matrix(120, 30, seed=8)
@@ -170,17 +195,17 @@ def test_rows_equal_only_after_standardisation_keep_their_own_scores() -> None:
         matrix[second, 0] = np.nextafter(matrix[first, 0], np.inf)
     standardised = StandardScaler().fit_transform(matrix)
     assert all(standardised[a].tobytes() == standardised[b].tobytes() for a, b in pairs)
-    assert_kept_apart(matrix, pairs)
+    assert_kept_apart(matrix, pairs, marked)
 
 
-def test_zero_and_negative_zero_are_different_bytes() -> None:
+def test_zero_and_negative_zero_are_different_bytes(marked: bool) -> None:
     matrix = plain_matrix(120, 30, seed=9)
     pairs = [(row, row + 60) for row in range(10, 20)]
     for (first, second), column in zip(pairs, (0, 0, 3, 7, 11, 15, 19, 23, 27, 29), strict=True):
         matrix[first, column] = 0.0
         matrix[second] = matrix[first]
         matrix[second, column] = -0.0
-    assert_kept_apart(matrix, pairs)
+    assert_kept_apart(matrix, pairs, marked)
 
 
 def near_copies(dtype: type[np.floating]) -> np.ndarray:
@@ -265,47 +290,6 @@ def split_pairs(
     return found
 
 
-@pytest.mark.parametrize("pooling", WRITER_POOLINGS)
-@pytest.mark.parametrize("level", ["construct", "attribute"])
-def test_two_texts_of_one_string_get_one_similarity_score(
-    level: str, pooling: str, toy_rubric: Rubric, toy_corpus: TextTable
-) -> None:
-    texts = toy_corpus.frame["text"].tolist()
-    ids = [str(text_id) for text_id in toy_corpus.ids()]
-    first, second = SIMILARITY_PAIR
-    texts[second] = texts[first]
-    embedded = StubEncoder().embed(texts, ids)
-    refs = unit_references(toy_rubric, "stub", STUB_DIMENSION)
-    settings = SimilaritySettings(reduction="pca", writer_pooling=pooling, target_level=level)
-    frame = score_similarity(embedded, refs, toy_rubric, settings)
-    values = pd.Series(toy_corpus.frame[VALUES].to_numpy(dtype=float), index=ids)
-    pair = (ids[first], ids[second])
-    assert values[pair[0]] != values[pair[1]]
-    assert split_pairs(frame, pair, values) == {}
-
-
-@pytest.mark.parametrize("pooling", WRITER_POOLINGS)
-def test_the_roll_up_is_the_reduction_of_the_attribute_scores_as_returned(
-    pooling: str, toy_rubric: Rubric, toy_corpus: TextTable
-) -> None:
-    texts = toy_corpus.frame["text"].tolist()
-    ids = [str(text_id) for text_id in toy_corpus.ids()]
-    first, second = SIMILARITY_PAIR
-    texts[second] = texts[first]
-    embedded = StubEncoder().embed(texts, ids)
-    refs = unit_references(toy_rubric, "stub", STUB_DIMENSION)
-    settings = SimilaritySettings(reduction="pca", writer_pooling=pooling, target_level="attribute")
-    frame = score_similarity(embedded, refs, toy_rubric, settings)
-    by_target = {
-        str(target): block.set_index("text_id")["score"].reindex(ids).to_numpy(dtype=float)
-        for target, block in frame.groupby("target_id", sort=False)
-    }
-    rollup = by_target.pop(f"{toy_rubric.rubric_id}{ROLLUP_SUFFIX}")
-    assert rollup.tobytes() == rollup_scores(by_target, toy_rubric, "pca").tobytes()
-    for scores in (*by_target.values(), rollup):
-        assert scores[first].tobytes() == scores[second].tobytes()
-
-
 def quarter_references(rubric: Rubric) -> ReferenceEmbeddings:
     """Return the stub references with every entry set to 1/4 or -1/4 by its sign (length 1)."""
     references = unit_references(rubric, "stub", STUB_DIMENSION)
@@ -324,6 +308,51 @@ def cosines_are_exact(vectors: np.ndarray) -> bool:
     largest = np.where(nonzero, exponents, np.iinfo(np.int32).min).max(axis=1)
     smallest = np.where(nonzero, exponents, np.iinfo(np.int32).max).min(axis=1)
     return bool(np.all(largest - smallest <= EXACT_SPREAD))
+
+
+@pytest.mark.parametrize("pooling", WRITER_POOLINGS)
+@pytest.mark.parametrize("level", ["construct", "attribute"])
+def test_two_texts_of_one_string_get_one_similarity_score(
+    level: str, pooling: str, toy_rubric: Rubric, toy_corpus: TextTable
+) -> None:
+    texts = toy_corpus.frame["text"].tolist()
+    ids = [str(text_id) for text_id in toy_corpus.ids()]
+    first, second = SIMILARITY_PAIR
+    texts[second] = texts[first]
+    embedded = StubEncoder().embed(texts, ids)
+    # Quarter references give exact cosines, so the two equal vectors get equal rows of the
+    # reduction matrix on every platform (see the hybrid test below).
+    refs = quarter_references(toy_rubric)
+    assert cosines_are_exact(embedded.vectors)
+    settings = SimilaritySettings(reduction="pca", writer_pooling=pooling, target_level=level)
+    frame = score_similarity(embedded, refs, toy_rubric, settings)
+    values = pd.Series(toy_corpus.frame[VALUES].to_numpy(dtype=float), index=ids)
+    pair = (ids[first], ids[second])
+    assert values[pair[0]] != values[pair[1]]
+    assert split_pairs(frame, pair, values) == {}
+
+
+@pytest.mark.parametrize("pooling", WRITER_POOLINGS)
+def test_the_roll_up_is_the_reduction_of_the_attribute_scores_as_returned(
+    pooling: str, toy_rubric: Rubric, toy_corpus: TextTable
+) -> None:
+    texts = toy_corpus.frame["text"].tolist()
+    ids = [str(text_id) for text_id in toy_corpus.ids()]
+    first, second = SIMILARITY_PAIR
+    texts[second] = texts[first]
+    embedded = StubEncoder().embed(texts, ids)
+    refs = quarter_references(toy_rubric)
+    assert cosines_are_exact(embedded.vectors)
+    settings = SimilaritySettings(reduction="pca", writer_pooling=pooling, target_level="attribute")
+    frame = score_similarity(embedded, refs, toy_rubric, settings)
+    by_target = {
+        str(target): block.set_index("text_id")["score"].reindex(ids).to_numpy(dtype=float)
+        for target, block in frame.groupby("target_id", sort=False)
+    }
+    rollup = by_target.pop(f"{toy_rubric.rubric_id}{ROLLUP_SUFFIX}")
+    assert rollup.tobytes() == rollup_scores(by_target, toy_rubric, "pca").tobytes()
+    for scores in (*by_target.values(), rollup):
+        assert scores[first].tobytes() == scores[second].tobytes()
 
 
 def test_two_texts_of_one_string_get_one_hybrid_score(

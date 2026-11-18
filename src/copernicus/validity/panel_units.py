@@ -5,8 +5,9 @@ questionnaire answered by the person who wrote several texts. With ``unit="group
 compares one score per group with the group's gold value; a group's score is the mean over its
 texts that were scored for the target. This module reduces the run-averaged texts of a target
 to those group rows, and the run scores to the group's mean score in each run that all its
-texts have. With ``unit="text"`` every text with a score, a gold value and a covariate value
-is a row.
+texts have. A mean over a group's texts that is not finite although every value that enters it
+is finite is refused (`check_group_means`). With ``unit="text"`` every text with a score, a
+gold value and a covariate value is a row.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import pandas as pd
 
 from copernicus.errors import ConfigurationError
 from copernicus.validity._frames import listed
+from copernicus.validity.panel_checks import check_group_means
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +33,12 @@ VALUE_COLUMNS = ("score", "gold", "covariate")
 REQUIRED_VALUES = (
     (
         "score",
-        "run-averaged score is not finite (no run with a score, or an infinite value in a run)",
-        "score the text and correct an infinite run score",
-        "unit 'text' drops and counts a text without a run with a score, and refuses an "
-        "infinite score too",
+        "run-averaged score is not finite (no run with a score, an infinite value in a run, or "
+        "finite run scores whose average overflows)",
+        "score the text, correct an infinite run score, or divide every score by one constant so "
+        "that the sum of a text's run scores stays finite",
+        "unit 'text' drops and counts a text without a run with a score or with finite run "
+        "scores whose average overflows, and refuses an infinite score too",
     ),
     (
         "covariate",
@@ -170,9 +174,12 @@ def reduce_to_groups(
     Raises:
         ConfigurationError: If a text has no group or no finite gold value, the texts of a group
             carry more than one distinct gold value (the message names the target, the gold
-            column and the group), or there is a text whose run-averaged score is not finite (no
-            run with a score, or an infinite value in a run) or whose covariate is missing or not
-            finite (the message names the target, the group and the text).
+            column and the group), there is a text whose run-averaged score is not finite (no
+            run with a score, an infinite value in a run, or finite run scores whose average
+            overflows) or whose covariate is missing or not finite (the message names the target,
+            the group and the text), or the mean score or the mean covariate of a group is not
+            finite although the value of every text of the group is (the message names the
+            target and the group).
     """
     prefix = f"target {key!r}: "
     frame = aligned[list(VALUE_COLUMNS)].assign(
@@ -183,11 +190,15 @@ def reduce_to_groups(
     for column, rule, remedy, by_text in REQUIRED_VALUES:
         _check_finite(prefix, frame, column, rule, remedy, by_text)
     grouped = frame.groupby(GROUP_COLUMN, sort=True)
+    with np.errstate(over="ignore", invalid="ignore"):
+        means = {column: grouped[column].mean() for column in ("score", "covariate")}
+    for column, mean in means.items():
+        check_group_means(prefix, column, mean, [repr(group) for group in mean.index])
     reduced = pd.DataFrame(
         {
-            "score": grouped["score"].mean(),
+            "score": means["score"],
             "gold": grouped["gold"].first(),
-            "covariate": grouped["covariate"].mean(),
+            "covariate": means["covariate"],
             "n_texts": grouped.size(),
         }
     )
@@ -216,8 +227,10 @@ def group_runs(runs: pd.DataFrame, groups: pd.Series, used_texts: pd.Index) -> p
         reads by default), ``run_number`` and ``score``.
 
     Raises:
-        ConfigurationError: If a text of ``used_texts`` has no group, or a score row of such a
-            text has no run number.
+        ConfigurationError: If a text of ``used_texts`` has no group, a score row of such a
+            text has no run number, or the mean score of a group in a run that is returned is
+            not finite although the score of every text of the group in that run is (the
+            message names the group and the run).
     """
     return _group_runs(runs, groups, used_texts, "")
 
@@ -259,11 +272,15 @@ def _group_runs(
         }
     )
     by_run = frame.groupby(["text_id", "run_number"], sort=True)
-    means = by_run["score"].mean()
+    with np.errstate(over="ignore", invalid="ignore"):
+        means = by_run["score"].mean()
     texts_per_group = pd.Series(_group_of(used_texts, groups, prefix)).value_counts()
     needed = texts_per_group.reindex(means.index.get_level_values("text_id")).to_numpy()
     complete = by_run["text"].nunique().to_numpy() == needed
-    return means[complete].reset_index()
+    kept_means = means[complete]
+    names = [f"{group!r} in run {run}" for group, run in kept_means.index]
+    check_group_means(prefix, "score", kept_means, names)
+    return kept_means.reset_index()
 
 
 def _check_group_gold(
@@ -349,8 +366,9 @@ def rows_per_group(
 
     Raises:
         ConfigurationError: If the texts of a group that takes part, scored or not, carry two
-            gold values, or a used score row has no run number; or as `reduce_to_groups`
-            raises it.
+            gold values, a used score row has no run number, or the mean score of a group in
+            a run of its noise is not finite although every score in it is; or as
+            `reduce_to_groups` raises it.
     """
     prefix = f"target {key!r}: "
     has_gold = np.isfinite(aligned["gold"].to_numpy(dtype=float))

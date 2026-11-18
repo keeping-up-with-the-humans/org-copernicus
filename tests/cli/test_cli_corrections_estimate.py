@@ -66,6 +66,7 @@ def test_estimate_of_a_mean_on_a_drawn_sample(
     assert written["estimate"]["se"] == pytest.approx(direct.se)
     assert written["estimate"]["n_labelled"] == N_DRAWN and written["estimate"]["n_total"] == 600
     assert written["estimate"]["details"]["prediction"] == "score_a"
+    assert written["estimate"]["details"]["se_exactly_zero"] is False
     assert written["kind"] == "mean" and written["library_version"] == __version__
     assert summary_value(result.stdout, "method") == "ppi_mean"
     assert f"{direct.point:.4g}" in summary_value(result.stdout, "estimate")
@@ -281,6 +282,10 @@ def test_estimate_passes_the_weak_instrument_floor_to_oriv(
         (("--kind", "oriv", "--outcome", "n_words", "--score-b", "score_b"), "--score-a"),
         (("--kind", "difference"), "--group-column-split or --long-short"),
         (("--kind", "mean", "--formula", "1"), "--formula does not apply"),
+        (
+            ("--kind", "ols-outcome", "--formula", "1 +* n_words", "--pi-column", "pi"),
+            "formula '1 +* n_words' cannot be parsed as a formula",
+        ),
         (("--kind", "simex", "--outcome", "n_words", "--cluster"), "--cluster does not apply"),
         (("--kind", "median"), "--kind"),
         (("--kind", "ols-predictor", "--outcome", "n_words", "--variant", "x"), "ppi or ludwig"),

@@ -15,7 +15,10 @@ not groups), so the sampling error of the scale step is in the interval. The 2SL
 clustered by text (rows ``i`` and ``N + i`` are the same text), which treats the calibration as
 known and is too narrow with a small human sample, is reported as ``sandwich_se``. A resample on
 which the estimate is undefined (no calibration line, a correlation below the floor, a singular
-system) is counted, as for the other bootstrapped estimators.
+system) is counted, as for the other bootstrapped estimators, and the standard error needs
+``min_defined`` (50) defined resamples: with fewer, ``below_floor="refuse"`` refuses the
+estimate and ``below_floor="point"`` returns its point with the standard error and the interval
+NaN.
 
 The estimate needs a strong first stage: a correlation of the two proxies below the floor
 ``weak_instrument_floor`` (default ``WEAK_INSTRUMENT_FLOOR``, 0.20) in absolute value is refused,
@@ -39,7 +42,8 @@ from copernicus.corrections._proxy import (
     MIN_FINITE_BOOTS,
     MIN_LABELLED,
     ReverseCalibration,
-    bootstrap_se,
+    bootstrap_standard_error,
+    check_bootstrap,
     check_count,
     reverse_calibrate,
     sample_covariance,
@@ -61,6 +65,9 @@ SLOPE_COLUMN = 2
 # Rows of the first-stage coefficients: W_B instruments the first block, W_A the second.
 INSTRUMENT_B_ROW = 2
 INSTRUMENT_A_ROW = 3
+RESIDUAL_OK = "ok"
+RESIDUAL_CONSTANT = "constant_residual"
+"""The status of a residual correlation that is NaN because a proxy's residual is constant."""
 ESTIMATE_ERRORS = (
     "attenuation of the association from two machine measurements; the scale step uses the "
     "labelled rows"
@@ -82,6 +89,11 @@ class StackedFit:
     se: float
     first_stage_a_on_b: float
     first_stage_b_on_a: float
+
+    @property
+    def se_exactly_zero(self) -> bool:
+        """Whether the computed standard error equals 0."""
+        return self.se == 0.0
 
 
 def stacked_2sls(outcome: np.ndarray, proxy_a: np.ndarray, proxy_b: np.ndarray) -> StackedFit:
@@ -158,22 +170,27 @@ def _residual(values: np.ndarray, gold: np.ndarray) -> np.ndarray:
 
 def _residual_correlation(
     proxy_a: np.ndarray, proxy_b: np.ndarray, labelled: np.ndarray, gold: np.ndarray
-) -> float:
-    """Correlation of the two proxies' residuals on gold over the labelled rows.
+) -> tuple[float, str]:
+    """Correlation of the two proxies' residuals on gold over the labelled rows, and its status.
 
-    NaN when a proxy has no residual variance there (it equals a line of the gold values), so
-    no error correlation is defined.
+    NaN with the status ``constant_residual`` when the residual of a proxy is constant there by
+    ``is_constant`` (the proxy is a line of the gold values), so no error correlation is
+    defined; otherwise the status is ``ok``.
     """
     gold_labelled = gold[labelled]
     residual_a = _residual(proxy_a[labelled], gold_labelled)
     residual_b = _residual(proxy_b[labelled], gold_labelled)
     if is_constant(residual_a) or is_constant(residual_b):
-        return float("nan")
-    return float(np.corrcoef(residual_a, residual_b)[0, 1])
+        return float("nan"), RESIDUAL_CONSTANT
+    return float(np.corrcoef(residual_a, residual_b)[0, 1]), RESIDUAL_OK
 
 
 def _first_stage_f(correlation: float, n: int) -> float:
-    """The first-stage F statistic of one block with one instrument: ``(n - 2) r^2 / (1 - r^2)``."""
+    """The first-stage F statistic of one block with one instrument: ``(n - 2) r^2 / (1 - r^2)``.
+
+    Infinite when ``r^2`` is 1 or more, as for two proxies on one line; rounding can leave
+    their ``r^2`` just below 1, and the statistic is then very large.
+    """
     squared = correlation * correlation
     return float("inf") if squared >= 1.0 else (n - 2) * squared / (1.0 - squared)
 
@@ -235,6 +252,8 @@ def oriv(
     n_boot: int = 200,
     seed: int = 42,
     weak_instrument_floor: float = WEAK_INSTRUMENT_FLOOR,
+    min_defined: int = MIN_FINITE_BOOTS,
+    below_floor: str = "refuse",
 ) -> Estimate:
     """The slope of an outcome on the construct by instrumenting one measurement with another.
 
@@ -245,33 +264,53 @@ def oriv(
         score_a: The first measurement, a score column of the data.
         score_b: The second measurement, another score column whose error is independent of the
             first's.
-        n_boot: Number of bootstrap resamples, at least ``MIN_FINITE_BOOTS`` (50).
+        n_boot: Number of bootstrap resamples, an integer of at least ``min_defined``.
         seed: Seed of the bootstrap, an integer of at least 0.
         weak_instrument_floor: The smallest absolute correlation of the two proxies accepted,
             strictly between 0 and 1.
+        min_defined: The fewest resamples with a defined estimate from which the standard
+            error is computed, an integer from 2 to ``n_boot``; by default ``MIN_FINITE_BOOTS``
+            (50).
+        below_floor: What happens when fewer resamples have a defined estimate: ``"refuse"``
+            raises ``EstimatorError``; ``"point"`` returns the point with ``se``, ``ci_low``
+            and ``ci_high`` NaN and the details' ``se_status`` ``too_few_defined``, and logs
+            one warning that names the counts; ``sandwich_se`` is reported either way.
 
     Returns:
         The estimate, with method ``oriv``, the bootstrap standard error, and details
         ``score_a``, ``score_b``, ``outcome``, ``instrument_correlation`` (the correlation of
-        the two proxies over every text), ``shared_error_correlation`` (NaN when a proxy has no
-        residual on the labelled rows), ``first_stage`` (read-only: ``a_on_b``, ``b_on_a`` and
-        ``f_statistic``), ``calibration_a`` and ``calibration_b`` (the intercept and slope of
+        the two proxies over every text), ``shared_error_correlation`` with
+        ``shared_error_correlation_status`` (``ok``; ``constant_residual`` when the residual of
+        a proxy on the gold values is constant on the labelled rows by ``is_constant``, so that
+        no correlation is defined and the value is NaN), ``first_stage`` (read-only:
+        ``a_on_b``, ``b_on_a`` and ``f_statistic``, ``(n - 2) r^2 / (1 - r^2)`` of the proxies'
+        correlation ``r`` over the ``n`` texts, infinite when ``r^2`` is 1 or more),
+        ``calibration_a`` and ``calibration_b`` (the intercept and slope of
         each reverse calibration), ``weak_instrument_floor`` (the floor used), ``sandwich_se``
-        (the 2SLS sandwich clustered by text), ``n_boot``, ``n_boot_undefined`` and
-        ``n_boot_defined``.
+        (the 2SLS sandwich clustered by text) with ``sandwich_se_exactly_zero`` (True when that
+        sandwich is exactly 0, as for an outcome without any residual), ``n_boot``,
+        ``n_boot_undefined``, ``n_boot_defined``, ``min_defined`` (the floor that applied),
+        ``below_floor``,
+        ``se_status`` (``ok`` when the standard error was computed, ``too_few_defined`` when
+        fewer than ``min_defined`` resamples were defined and the point was kept without it)
+        and ``se_exactly_zero`` (True when the bootstrap standard error is exactly 0, as when
+        the defined estimates of the resamples are all equal; ``se_status`` is then ``ok``; see
+        ``make_estimate``).
 
     Raises:
-        SettingsError: If the two measurements are the same column, or ``n_boot``, ``seed`` or
-            ``weak_instrument_floor`` is outside its range.
+        SettingsError: If the two measurements are the same column, or ``n_boot``, ``seed``,
+            ``weak_instrument_floor``, ``min_defined`` or ``below_floor`` is outside its range.
         ConfigurationError: If the outcome or a measurement does not match the data.
         EstimatorError: If fewer than three texts are labelled, a reverse calibration has no
             line, the proxies' correlation is below the floor in absolute value, the stacked
             system is rank-deficient or its instruments carry no first-stage signal, or fewer
-            than ``MIN_FINITE_BOOTS`` resamples have a defined estimate.
+            than ``min_defined`` resamples have a defined estimate and ``below_floor`` is
+            ``"refuse"``.
     """
     if score_a == score_b:
         raise SettingsError("score_a and score_b must differ: ORIV needs two measurements")
-    n_boot = check_count("n_boot", n_boot, MIN_FINITE_BOOTS)
+    bootstrap = check_bootstrap(n_boot, min_defined, below_floor)
+    n_boot = bootstrap.n_boot
     seed = check_count("seed", seed, 0)
     floor = _checked_floor(weak_instrument_floor)
     response = outcome_values(data, outcome)
@@ -289,8 +328,12 @@ def oriv(
     draws = stratified_bootstrap(
         resample_slope, labelled, n_boot=n_boot, rng=np.random.default_rng(seed)
     )
-    se = bootstrap_se(draws, n_boot)
+    standard_error = bootstrap_standard_error(draws, bootstrap, method="oriv", log=logger)
+    se = standard_error.se
     fit = estimate.fit
+    shared, shared_status = _residual_correlation(
+        estimate.calibration_a.proxy, estimate.calibration_b.proxy, labelled, gold
+    )
     logger.info(
         "ORIV slope %.4g (SE %.3g, sandwich %.3g), instrument correlation %.3f",
         fit.slope,
@@ -309,9 +352,8 @@ def oriv(
             "score_b": name_b,
             "outcome": outcome,
             "instrument_correlation": estimate.correlation,
-            "shared_error_correlation": _residual_correlation(
-                estimate.calibration_a.proxy, estimate.calibration_b.proxy, labelled, gold
-            ),
+            "shared_error_correlation": shared,
+            "shared_error_correlation_status": shared_status,
             "first_stage": MappingProxyType(
                 {
                     "a_on_b": fit.first_stage_a_on_b,
@@ -323,9 +365,11 @@ def oriv(
             "calibration_b": (estimate.calibration_b.intercept, estimate.calibration_b.slope),
             "weak_instrument_floor": floor,
             "sandwich_se": fit.se,
+            "sandwich_se_exactly_zero": fit.se_exactly_zero,
             "n_boot": n_boot,
             "n_boot_undefined": draws.n_undefined,
             "n_boot_defined": n_boot - draws.n_undefined,
+            **standard_error.details(),
         },
     )
 

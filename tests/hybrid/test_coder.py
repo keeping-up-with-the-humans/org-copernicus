@@ -17,7 +17,7 @@ from copernicus.data import TextTable
 from copernicus.embeddings import ENCODERS, Encoder
 from copernicus.errors import ConfigurationError, SettingsError
 from copernicus.hybrid import HYBRID_DEFAULTS, HybridResult, evidence_texts, score_hybrid
-from copernicus.hybrid.coder import _gather
+from copernicus.hybrid._gather import gather
 from copernicus.rubric.model import Rubric
 from copernicus.similarity import (
     SimilaritySettings,
@@ -344,6 +344,6 @@ def test_a_gathered_set_keeps_the_text_form_but_not_the_digest_of_other_texts() 
     unique = StubEncoder().embed(["first text", "second text"], ["0", "1"])
     record = {"text_form": "as_given", "texts_hash": "ab" * 32}
     recorded = replace(unique, sidecar={**unique.sidecar, **record})
-    gathered = _gather(recorded, np.asarray([1, 1, 0], dtype=np.int64), ["x", "y", "z"])
+    gathered = gather(recorded, np.asarray([1, 1, 0], dtype=np.int64), ["x", "y", "z"])
     assert gathered.sidecar["text_form"] == "as_given" and "texts_hash" not in gathered.sidecar
     assert (gathered.sidecar["n_texts"], gathered.sidecar["n_chunks"]) == (3, 3)

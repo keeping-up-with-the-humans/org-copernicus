@@ -15,10 +15,12 @@ labelled rows (see ``_proxy``) and its error variance ``sigma2 = var(W - g)`` th
 
 The standard error of both is the standard deviation over a stratified bootstrap that refits
 the reverse calibration, ``sigma2`` and (for SIMEX, with ``boot_reps`` noise replicates) the
-curve on every resample. The bootstrap resamples texts, not groups, so it treats the texts as
-independent. The labelled rows serve only to fit the error model, so they must be a random sample
-of the texts; ``pi`` is not used. Moments are sample moments throughout. The score
-column defaults to the first one, which is never chosen on gold values.
+curve on every resample. It needs ``min_defined`` (50) resamples with a defined estimate; with
+fewer, ``below_floor="refuse"`` refuses the estimate and ``below_floor="point"`` returns its
+point with the standard error and the interval NaN. The bootstrap resamples texts, not groups,
+so it treats the texts as independent. The labelled rows serve only to fit the error model, so
+they must be a random sample of the texts; ``pi`` is not used. Moments are sample moments
+throughout. The score column defaults to the first one, which is never chosen on gold values.
 """
 
 from __future__ import annotations
@@ -33,7 +35,8 @@ from copernicus.corrections._proxy import (
     MIN_FINITE_BOOTS,
     MIN_LABELLED,
     ReverseCalibration,
-    bootstrap_se,
+    bootstrap_standard_error,
+    check_bootstrap,
     check_count,
     reverse_calibrate,
     sample_covariance,
@@ -95,6 +98,8 @@ def moment_subtraction(
     score_column: str | None = None,
     n_boot: int = 200,
     seed: int = 42,
+    min_defined: int = MIN_FINITE_BOOTS,
+    below_floor: str = "refuse",
 ) -> Estimate:
     """The slope of an outcome on the construct by moment subtraction on the classical proxy.
 
@@ -102,24 +107,38 @@ def moment_subtraction(
         data: The correction data with gold on a random sample of labelled rows.
         outcome: A numeric column of the data, finite on every text.
         score_column: The score column to put on the construct's scale; ``None`` for the first.
-        n_boot: Number of bootstrap resamples, at least ``MIN_FINITE_BOOTS`` (50).
+        n_boot: Number of bootstrap resamples, an integer of at least ``min_defined``.
         seed: Seed of the bootstrap, an integer of at least 0.
+        min_defined: The fewest resamples with a defined estimate from which the standard
+            error is computed, an integer from 2 to ``n_boot``; by default ``MIN_FINITE_BOOTS``
+            (50).
+        below_floor: What happens when fewer resamples have a defined estimate: ``"refuse"``
+            raises ``EstimatorError``; ``"point"`` returns the point with ``se``, ``ci_low``
+            and ``ci_high`` NaN and the details' ``se_status`` ``too_few_defined``, and logs
+            one warning that names the counts.
 
     Returns:
         The estimate, with method ``moment_subtraction`` and details ``score_column``,
         ``outcome``, ``naive_slope`` (``cov(W, y) / var(W)``), ``sigma2``, ``proxy_variance``,
         ``corrected_variance``, ``calibration_intercept``, ``calibration_slope``, ``n_boot``,
-        ``n_boot_undefined`` (resamples on which the estimate was undefined) and
-        ``n_boot_defined``.
+        ``n_boot_undefined`` (resamples on which the estimate was undefined),
+        ``n_boot_defined``, ``min_defined`` (the floor that applied), ``below_floor``,
+        ``se_status`` (``ok`` when the standard error was computed, ``too_few_defined`` when
+        fewer than ``min_defined`` resamples were defined and the point was kept without it)
+        and ``se_exactly_zero`` (True when the standard error is exactly 0, as when the defined
+        estimates of the resamples are all equal; ``se_status`` is then ``ok``; see
+        ``make_estimate``).
 
     Raises:
-        SettingsError: If ``n_boot`` or ``seed`` is outside its range.
+        SettingsError: If ``n_boot``, ``seed``, ``min_defined`` or ``below_floor`` is outside
+            its range.
         ConfigurationError: If the outcome or the score column does not match the data.
         EstimatorError: If fewer than three texts are labelled, the reverse calibration has no
-            line, the corrected variance is not positive, or fewer than ``MIN_FINITE_BOOTS``
-            resamples have a defined estimate.
+            line, the corrected variance is not positive, or fewer than ``min_defined``
+            resamples have a defined estimate and ``below_floor`` is ``"refuse"``.
     """
-    n_boot = check_count("n_boot", n_boot, MIN_FINITE_BOOTS)
+    bootstrap = check_bootstrap(n_boot, min_defined, below_floor)
+    n_boot = bootstrap.n_boot
     seed = check_count("seed", seed, 0)
     response = outcome_values(data, outcome)
     score, column = score_values(data, score_column)
@@ -133,7 +152,10 @@ def moment_subtraction(
     draws = stratified_bootstrap(
         resample_slope, labelled, n_boot=n_boot, rng=np.random.default_rng(seed)
     )
-    se = bootstrap_se(draws, n_boot)
+    standard_error = bootstrap_standard_error(
+        draws, bootstrap, method="moment_subtraction", log=logger
+    )
+    se = standard_error.se
     logger.info(
         "moment subtraction slope %.4g (SE %.3g); %d of %d resamples undefined",
         fit.slope,
@@ -159,6 +181,7 @@ def moment_subtraction(
             "n_boot": n_boot,
             "n_boot_undefined": draws.n_undefined,
             "n_boot_defined": n_boot - draws.n_undefined,
+            **standard_error.details(),
         },
     )
 
@@ -232,6 +255,8 @@ def simex(
     reps: int = 25,
     n_boot: int = 100,
     boot_reps: int = 10,
+    min_defined: int = MIN_FINITE_BOOTS,
+    below_floor: str = "refuse",
 ) -> Estimate:
     """The slope of an outcome on the construct by SIMEX with the rational extrapolant.
 
@@ -241,24 +266,37 @@ def simex(
         score_column: The score column to put on the construct's scale; ``None`` for the first.
         seed: Seed of the noise and of the bootstrap, an integer of at least 0.
         reps: Noise replicates per multiple for the estimate, at least 1.
-        n_boot: Number of bootstrap resamples, at least ``MIN_FINITE_BOOTS`` (50).
+        n_boot: Number of bootstrap resamples, an integer of at least ``min_defined``.
         boot_reps: Noise replicates per multiple inside each resample, at least 1.
+        min_defined: The fewest resamples with a defined estimate from which the standard
+            error is computed, an integer from 2 to ``n_boot``; by default ``MIN_FINITE_BOOTS``
+            (50).
+        below_floor: What happens when fewer resamples have a defined estimate: ``"refuse"``
+            raises ``EstimatorError``; ``"point"`` returns the point with ``se``, ``ci_low``
+            and ``ci_high`` NaN and the details' ``se_status`` ``too_few_defined``, and logs
+            one warning that names the counts.
 
     Returns:
         The estimate, with method ``simex`` and details ``status`` (``ok``, ``constant`` or
         ``linear_limit``), ``pole``, ``lambdas``, ``curve`` (the averaged slope at each
         multiple, a tuple), ``naive_slope`` (``cov(W, y) / var(W)``), ``sigma2``,
         ``score_column``, ``outcome``, ``reps``, ``n_boot``, ``boot_reps``,
-        ``n_boot_undefined`` and ``n_boot_defined``.
+        ``n_boot_undefined``, ``n_boot_defined``, ``min_defined`` (the floor that applied),
+        ``below_floor``, ``se_status`` (``ok`` when the standard error was computed,
+        ``too_few_defined`` when fewer than ``min_defined`` resamples were defined and the
+        point was kept without it) and ``se_exactly_zero`` (as for ``moment_subtraction``).
 
     Raises:
-        SettingsError: If ``reps``, ``n_boot``, ``boot_reps`` or ``seed`` is outside its range.
+        SettingsError: If ``reps``, ``n_boot``, ``boot_reps``, ``seed``, ``min_defined`` or
+            ``below_floor`` is outside its range.
         ConfigurationError: If the outcome or the score column does not match the data.
         EstimatorError: If fewer than three texts are labelled, the reverse calibration has no
             line, the extrapolation's status is ``pole_le_1`` or ``no_fit`` (the message names
-            it), or fewer than ``MIN_FINITE_BOOTS`` resamples have a defined estimate.
+            it), or fewer than ``min_defined`` resamples have a defined estimate and
+            ``below_floor`` is ``"refuse"``.
     """
-    n_boot = check_count("n_boot", n_boot, MIN_FINITE_BOOTS)
+    bootstrap = check_bootstrap(n_boot, min_defined, below_floor)
+    n_boot = bootstrap.n_boot
     reps = check_count("reps", reps, 1)
     boot_reps = check_count("boot_reps", boot_reps, 1)
     seed = check_count("seed", seed, 0)
@@ -273,7 +311,8 @@ def simex(
         return _simex_fit(score[rows], response[rows], sample, gold[rows], boot_reps, rng).value
 
     draws = stratified_bootstrap(resample_value, labelled, n_boot=n_boot, rng=rng)
-    se = bootstrap_se(draws, n_boot)
+    standard_error = bootstrap_standard_error(draws, bootstrap, method="simex", log=logger)
+    se = standard_error.se
     logger.info("SIMEX slope %.4g (SE %.3g), status %s", fit.value, se, fit.status)
     return make_estimate(
         fit.value,
@@ -295,6 +334,7 @@ def simex(
             "boot_reps": boot_reps,
             "n_boot_undefined": draws.n_undefined,
             "n_boot_defined": n_boot - draws.n_undefined,
+            **standard_error.details(),
         },
     )
 

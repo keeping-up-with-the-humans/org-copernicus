@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -74,3 +76,53 @@ def test_the_folds_follow_the_documented_generator_key(world: World):
     renamed = world.frame.rename(columns={GOLD: "renamed"})
     other = run(world, ONE_FIT, gold=renamed, gold_column="renamed")
     assert fold_of_each_text(other) != expected
+
+
+# --- seeds of two integer types in one run ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "seeds",
+    [(42, 2**63), (2**63, 42), (-1, 2**63), (42, 2**64 + 5)],
+    ids=["signed_then_unsigned", "unsigned_then_signed", "negative_and_unsigned", "beyond_64_bits"],
+)
+def test_seeds_of_two_integer_types_keep_their_values_in_every_table(
+    world: World, seeds: tuple[int, int]
+) -> None:
+    # The out-of-fold predictions of each seed arrive as their own frames; joined as they
+    # were, a signed and an unsigned seed column became floats, and the run failed.
+    settings = BaselineSettings(sizes=("full",), seeds=seeds, encoder_sets=("alpha",))
+    both = run(world, settings)
+    for table in (both.results, both.oof_predictions):
+        assert [int(seed) for seed in table["seed"].drop_duplicates()] == list(seeds)
+        assert all(float(seed).is_integer() for seed in table["seed"])
+    for seed in seeds:
+        alone = run(world, dataclasses.replace(settings, seeds=(seed,)))
+        mine = both.oof_predictions[[int(value) == seed for value in both.oof_predictions["seed"]]]
+        assert mine["prediction"].tolist() == alone.oof_predictions["prediction"].tolist()
+        assert mine["text_id"].tolist() == alone.oof_predictions["text_id"].tolist()
+
+
+def test_ordinary_seeds_keep_the_integer_type_of_the_out_of_fold_table(world: World) -> None:
+    settings = BaselineSettings(sizes=("full",), seeds=(0, 1), encoder_sets=("alpha",))
+    assert str(run(world, settings).oof_predictions["seed"].dtype) == "int64"
+
+
+@pytest.mark.parametrize(
+    ("seeds", "kind"),
+    [
+        ((np.int32(42), np.int32(43)), "int32"),
+        ((np.uint32(42), np.uint32(43)), "uint32"),
+        ((np.int8(-1), np.uint8(255)), "int16"),
+    ],
+    ids=["int32", "uint32", "int8_and_uint8"],
+)
+def test_seed_columns_that_join_exactly_keep_the_type_they_join_to(
+    world: World, seeds: tuple[np.integer, np.integer], kind: str
+) -> None:
+    # Seed columns of one integer type, or of two that a wider integer type holds, join
+    # without loss as they are: the out-of-fold table keeps the type of that join.
+    settings = BaselineSettings(sizes=("full",), seeds=seeds, encoder_sets=("alpha",))
+    column = run(world, settings).oof_predictions["seed"]
+    assert str(column.dtype) == kind
+    assert [int(seed) for seed in column.drop_duplicates()] == [int(seed) for seed in seeds]

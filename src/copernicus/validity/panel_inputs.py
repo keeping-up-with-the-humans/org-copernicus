@@ -12,6 +12,7 @@ from collections.abc import Iterable, Sequence
 import numpy as np
 import pandas as pd
 
+from copernicus.coders.limits import floats_within_limit
 from copernicus.data import TextTable
 from copernicus.errors import ConfigurationError
 from copernicus.validity._frames import listed, require_columns
@@ -45,8 +46,13 @@ def _by_string_id(frame: pd.DataFrame) -> pd.DataFrame:
 def numeric_column(frame: pd.DataFrame, column: str, what: str) -> pd.Series:
     """Return a numeric column as floats, with missing values as NaN.
 
+    Every row of the column is checked, whether its text was scored or not: a finite value
+    above `copernicus.coders.MAX_ABSOLUTE_VALUE` (1e150) in absolute value is refused, so that
+    a sum of the values stays inside the range of 64-bit floats. A missing value and
+    an infinity are returned as they are.
+
     Args:
-        frame: Frame holding the column.
+        frame: Frame holding the column, indexed by text id.
         column: Column name.
         what: Role of the column in messages (``gold`` or ``covariate``).
 
@@ -55,7 +61,9 @@ def numeric_column(frame: pd.DataFrame, column: str, what: str) -> pd.Series:
 
     Raises:
         ConfigurationError: If the column is absent or not numeric (boolean counts as
-            numeric); numeric values are required, so encode categories first.
+            numeric); numeric values are required, so encode categories first. Also if a
+            finite value is above the limit in absolute value, naming the column, its texts
+            (the first ten), the largest absolute value, the limit and the remedy.
     """
     require_columns(frame, [column], what)
     series = frame[column]
@@ -64,7 +72,8 @@ def numeric_column(frame: pd.DataFrame, column: str, what: str) -> pd.Series:
             f"{what} column {column!r} must be numeric (dtype {series.dtype}); "
             f"encode string labels as numbers, for example 1 for low and 2 for high"
         )
-    values = series.to_numpy(dtype="float64", na_value=np.nan)
+    ids = frame.index.to_numpy(dtype=object)
+    values = floats_within_limit(f"{what} value in column {column!r}", series, ids)
     return pd.Series(values, index=frame.index, name=column)
 
 
@@ -192,7 +201,8 @@ def resolve_covariate(
 
     Raises:
         ConfigurationError: If there is no table and no name, the name is in neither
-            place, or the column is not numeric.
+            place, or the column is not numeric or holds a finite value above
+            `copernicus.coders.MAX_ABSOLUTE_VALUE` in absolute value (see `numeric_column`).
     """
     if name is None:
         if table is None:

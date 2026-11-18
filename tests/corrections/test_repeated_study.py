@@ -40,6 +40,8 @@ COLUMNS = [
     "n_draws",
     "n_undefined",
     "status",
+    "n_rank_deficient_folds",
+    "n_se_exactly_zero",
 ]
 ESTIMATORS = ("raw", "calibrated", "ppi_identity", "ppi_crossfit")
 ESTIMANDS = ("mean", "long_short_difference")
@@ -68,6 +70,8 @@ def test_the_study_has_one_row_per_estimator_size_and_estimand() -> None:
         assert 0.0 <= row.coverage <= 1.0
         assert row.se_mean > 0.0
         assert (row.n_draws, row.n_undefined, row.status) == (40, 0, "ok")
+        assert row.n_rank_deficient_folds == 0
+        assert row.n_se_exactly_zero == 0
     score = data.frame["score"].to_numpy()
     raw = table[table["estimator"] == "raw"].set_index(["size", "estimand"])
     assert raw.loc[(20, "mean"), "estimate_mean"] == pytest.approx(score.mean(), abs=1e-12)

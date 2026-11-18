@@ -11,14 +11,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from copernicus._digests import without_texts_hash
 from copernicus._io import check_same_encoder
 from copernicus._load_check import LOAD_COMPARISON_KEY, compare_loads
 from copernicus.coders import export_provenance
 from copernicus.data import TextTable
-from copernicus.embeddings import EmbeddingSet, Encoder
+from copernicus.embeddings import Encoder
 from copernicus.embeddings.encoder import CHECKPOINT_EVERY
 from copernicus.errors import ConfigurationError, SettingsError
+from copernicus.hybrid._gather import gather
 from copernicus.hybrid._loaded_encoder import check_before_the_pass
 from copernicus.hybrid.texts import GRANULARITIES, HybridTexts, evidence_texts
 from copernicus.rubric.identifiers import ROLLUP_SUFFIX
@@ -69,9 +69,9 @@ class HybridResult:
             ``fallback`` (``""``, ``"short"``, ``"no_evidence"`` of the text, or at the
             roll-up the distinct non-empty fallbacks of its attributes joined by commas).
         summary: At construct granularity the summary of the evidence texts (``n_texts``,
-            ``n_short``, ``n_no_evidence``, ``n_evidence``, ``mean_words_evidence``,
-            ``n_passages_embedded``). At attribute granularity ``n_texts``,
-            ``n_attributes``, ``n_short`` (the same for every attribute),
+            ``n_short``, ``n_no_evidence``, ``n_evidence``, ``mean_words_evidence``, NaN when
+            no text uses its passages, and ``n_passages_embedded``). At attribute granularity
+            ``n_texts``, ``n_attributes``, ``n_short`` (the same for every attribute),
             ``n_no_evidence_cells`` and ``n_evidence_cells`` (summed over attributes),
             ``n_passages_embedded``, ``n_distinct_texts_embedded`` (strings that went
             through the encoder), and ``by_attribute`` (the summary of each attribute).
@@ -89,37 +89,6 @@ class HybridResult:
     frame: pd.DataFrame
     summary: dict[str, Any]
     provenance: dict[str, Any]
-
-
-def _gather(unique: EmbeddingSet, rows: np.ndarray, ids: list[str]) -> EmbeddingSet:
-    """Return the embeddings of the rows of ``unique``, repeated as often as asked, under new ids.
-
-    The sidecar leaves out the ``texts_hash`` of ``unique``, which names other texts.
-
-    Args:
-        unique: Embeddings of distinct texts.
-        rows: For each wanted text, the row of its string in ``unique``.
-        ids: The ids of the wanted texts; unique.
-    """
-    by_owner = np.argsort(unique.chunk_owner, kind="stable")
-    counts = np.bincount(unique.chunk_owner, minlength=len(unique))
-    starts = np.cumsum(counts) - counts
-    chunk_rows = np.concatenate([by_owner[starts[row] : starts[row] + counts[row]] for row in rows])
-    owner = np.repeat(np.arange(len(rows), dtype=np.int64), counts[rows])
-    return replace(
-        unique,
-        ids=np.asarray(ids),
-        vectors=unique.vectors[rows],
-        chunk_vectors=unique.chunk_vectors[chunk_rows],
-        chunk_owner=owner,
-        chunk_weight=unique.chunk_weight[chunk_rows],
-        metadata=None,
-        sidecar={
-            **without_texts_hash(unique.sidecar),
-            "n_texts": len(rows),
-            "n_chunks": len(chunk_rows),
-        },
-    )
 
 
 Scored = tuple[pd.DataFrame, dict[str, Any], Mapping[str, Any]]
@@ -213,24 +182,29 @@ def _score_attribute(
 ) -> Scored:
     """Embed every distinct attribute text once, score each attribute on its own poles, roll up.
 
+    The pass names each distinct string ``<text_id> (<attribute_id>)`` after the first text
+    and attribute that use it, in rubric and table order, so a refusal of the encoder names
+    a text; an attribute id holds neither a space nor a bracket, so the names differ.
+
     Returns:
         The scores, the summary of the evidence texts, and the sidecar of their embeddings.
     """
     names = list(by_attribute)
     attribute_settings = replace(settings, target_level="attribute")
-    distinct: dict[str, int] = {}
-    for texts in by_attribute.values():
-        for text in texts.texts:
-            distinct.setdefault(text, len(distinct))
-    distinct_texts, row_ids = list(distinct), [str(row) for row in range(len(distinct))]
-    check_before_the_pass(encoder, refs, distinct_texts, row_ids, checkpoint.every)
+    named: dict[str, str] = {}
+    for name, texts in by_attribute.items():
+        for text_id, text in zip(texts.ids, texts.texts, strict=True):
+            named.setdefault(text, f"{text_id} ({name})")
+    distinct = {text: row for row, text in enumerate(named)}
+    distinct_texts, labels = list(named), list(named.values())
+    check_before_the_pass(encoder, refs, distinct_texts, labels, checkpoint.every)
     unique = encoder.embed(
-        distinct_texts, row_ids, checkpoint=checkpoint.path, checkpoint_every=checkpoint.every
+        distinct_texts, labels, checkpoint=checkpoint.path, checkpoint_every=checkpoint.every
     )
     frames: list[pd.DataFrame] = []
     for name, texts in by_attribute.items():
         rows = np.asarray([distinct[text] for text in texts.texts], dtype=np.int64)
-        embedded = _gather(unique, rows, texts.ids)
+        embedded = gather(unique, rows, texts.ids)
         frame = score_similarity(embedded, refs, rubric, attribute_settings, targets=[name])
         frame["fallback"] = frame["text_id"].map(dict(zip(texts.ids, texts.fallback, strict=True)))
         frames.append(frame)

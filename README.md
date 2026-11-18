@@ -10,13 +10,13 @@ copernicus codes constructs from text against a rubric. A rubric names a constru
 
 ## Installation
 
-Install the package from its root folder, the one that holds `pyproject.toml`. The name on the package index is `org-copernicus`; the import name and the command are `copernicus`. `pip install org-copernicus` installs the package once a release has been uploaded to the package index; none has been uploaded so far; until then it is installed from its root folder or from a wheel built there:
+Install the package from its root folder, the one that holds `pyproject.toml`. The distribution name is `org-copernicus`; the import name and the command are `copernicus`. `pip install org-copernicus` installs the package once a release has been uploaded to the package index; none has been uploaded so far; until then it is installed from its root folder or from a wheel built there:
 
 ```
 pip install .
 ```
 
-The base install needs Python 3.10 or later and runs everything except the embedding encoders. Extras add the rest:
+The base install needs Python 3.10 or later and runs everything except the embedding encoders. It requires `formulaic` 1.2.2 or later, which an install from the checkout or from its wheel brings along. Extras add the rest:
 
 | Extra | Adds | Needed for |
 |-------|------|------------|
@@ -88,7 +88,7 @@ The documentation site is built from the `docs/` folder with MkDocs. Install the
 
 Please cite the accompanying methods paper (under review) and the software:
 
-> Author names withheld. copernicus: rubric-based construct coding with LLM methods. Version 0.2.0. Software accompanying a methods paper under review.
+> Author names withheld. copernicus: rubric-based construct coding with LLM methods. Version 0.3.0. Software accompanying a methods paper under review.
 
 `CITATION.cff` holds the same entry in a form that reference managers read.
 

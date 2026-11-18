@@ -5,14 +5,14 @@ from __future__ import annotations
 import math
 import warnings
 
-import numpy as np
 import pandas as pd
 import pytest
-from units_support import GOLD, N_BOOT, ROUTE_IDS, ROUTES, SIX_TEXTS, build, on_route
+from units_support import GOLD, N_BOOT, ROUTE_IDS, ROUTES, SIX_TEXTS, build, computed, on_route
 
 from copernicus.data import TextTable
 from copernicus.errors import ConfigurationError
 from copernicus.validity.panel import PanelSettings, validity_panel
+from copernicus.validity.panel_inputs import resolve_target_scores
 
 UNITS = ["text", "group"]
 SIGNS = [math.inf, -math.inf]
@@ -106,8 +106,8 @@ def overflowing_construct() -> tuple[pd.DataFrame, pd.DataFrame, TextTable]:
     """SIX_TEXTS with two attributes; t2's only run scores 1e308 in both, a finite value.
 
     The construct averages the attribute scores of a text and run, and the sum of 1e308 and
-    1e308 is larger than the largest float, so t2's construct score is infinite although every
-    input score is finite.
+    1e308 is larger than the largest float, so t2's construct score would be infinite although
+    every input score is finite.
     """
     scores, gold, table = build(SIX_TEXTS)
     both = pd.concat([scores, scores.assign(attribute_id="beta")], ignore_index=True)
@@ -115,26 +115,12 @@ def overflowing_construct() -> tuple[pd.DataFrame, pd.DataFrame, TextTable]:
     return both, gold, table
 
 
-@pytest.mark.parametrize("unit", UNITS)
-@pytest.mark.parametrize("key", ["construct", "construct:construct"])
-def test_a_construct_score_that_overflows_is_refused_as_an_infinite_score(key, unit):
-    # Version 0.1.0 dropped and counted t2 under the text unit, as a text whose run-averaged score
-    # was infinite. The overflow is numpy's to warn of; errstate keeps that warning from standing
-    # in for the panel's error when warnings are turned into errors.
-    scores, gold, table = overflowing_construct()
-    with np.errstate(over="ignore"), pytest.raises(ConfigurationError) as refused:
-        validity_panel(scores, gold, table, targets={key: GOLD}, settings=settings_of(unit))
-    message = str(refused.value)
-    assert f"target {key!r}" in message
-    assert "text(s) 't2' of group 'G1' carry an infinite score" in message
-
-
 def construct_missing_by_overflow() -> tuple[pd.DataFrame, pd.DataFrame, TextTable]:
     """SIX_TEXTS with three attributes, one attribute after the other; t2 scores 1e308 in each.
 
-    Summed in that order, the three finite scores of t2's only run give a missing construct score,
-    not an infinite one: the sum passes the largest float at the second score, and the correction
-    of the running sum then subtracts infinity from infinity.
+    Summed in that order, the three finite scores of t2's only run would give a missing construct
+    score, not an infinite one: the sum passes the largest float at the second score, and the
+    correction of the running sum then subtracts infinity from infinity.
     """
     scores, gold, table = build(SIX_TEXTS)
     others = [scores.assign(attribute_id=name) for name in ("beta", "gamma")]
@@ -143,24 +129,38 @@ def construct_missing_by_overflow() -> tuple[pd.DataFrame, pd.DataFrame, TextTab
     return three, gold, table
 
 
+@pytest.mark.parametrize("unit", UNITS)
 @pytest.mark.parametrize("key", ["construct", "construct:construct"])
-def test_a_construct_score_that_overflows_to_a_missing_value_is_a_run_without_a_score(key):
-    # No input score is infinite and none of the generated ones is, so the refusal of an infinite
-    # score does not apply. t2 has no other run: the text unit drops and counts it, and the group
-    # unit refuses it as a text whose run-averaged score is not finite.
-    scores, gold, table = construct_missing_by_overflow()
+@pytest.mark.parametrize(
+    "frames", [overflowing_construct, construct_missing_by_overflow], ids=["infinite", "missing"]
+)
+def test_attribute_scores_whose_construct_would_overflow_are_refused_by_the_limit(
+    frames, key, unit
+):
+    # Version 0.1.0 dropped and counted t2 under the text unit in both cases. Scores of 1e308 are
+    # above the library's limit, so the panel refuses them before the construct is averaged, and
+    # with warnings turned into errors its error is what is raised.
+    scores, gold, table = frames()
     with warnings.catch_warnings():
         warnings.simplefilter("error")
-        panel = validity_panel(
-            scores, gold, table, targets={key: GOLD}, settings=settings_of("text")
-        )
-        row = panel.frame.iloc[0]
-        assert (row["status"], row["n_used"], row["n_dropped_missing"]) == ("ok", 5, 1)
         with pytest.raises(ConfigurationError) as refused:
-            validity_panel(scores, gold, table, targets={key: GOLD}, settings=settings_of("group"))
+            validity_panel(scores, gold, table, targets={key: GOLD}, settings=settings_of(unit))
     message = str(refused.value)
-    assert f"target {key!r}" in message and "carry an infinite score" not in message
-    assert "run-averaged score is not finite" in message and "text(s) 't2' of group 'G1'" in message
+    assert message.startswith(f"target {key!r}: text(s) 't2' have a score above 1e+150")
+
+
+@pytest.mark.parametrize("unit", UNITS)
+def test_an_infinite_construct_score_of_finite_attribute_scores_is_refused_as_infinite(unit):
+    # A construct score that is infinite although no attribute score is: the rows that
+    # compute_target receives show it, and the record of the raw rows does not hold it.
+    scores, _, _ = build(SIX_TEXTS)
+    runs = resolve_target_scores(scores, ["construct"])["construct"]
+    runs.loc[runs["text_id"] == "t2", "score"] = math.inf
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with pytest.raises(ConfigurationError) as refused:
+            computed(SIX_TEXTS, unit, runs=runs)
+    assert "text(s) 't2' of group 'G1' carry an infinite score" in str(refused.value)
 
 
 def adjacent_two_attributes(text: str, alpha: float, beta: float) -> tuple[pd.DataFrame, ...]:

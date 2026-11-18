@@ -53,50 +53,53 @@ prediction varies. This can make the intervals conservative at large sampling fr
 it does not guarantee coverage. When the groups differ in size, a whole-group draw can miss a
 group that holds a large share of the texts in many draws: the mean and the difference of
 ``ppi_identity`` are then ratio estimators with a bias (see ``mean_ppi``), and the normal
-intervals of
-``ppi_identity`` and ``ppi_crossfit`` can cover the full-gold value far less often than 95
-percent although every draw is defined, at large sampling fractions too. The status ``ok``
-certifies only that the share of undefined draws is within the limit, not that the intervals
-cover; read ``coverage``.
+intervals of ``ppi_identity`` and ``ppi_crossfit`` can cover the full-gold value far less often
+than 95 percent although every draw is defined, at large sampling fractions too. A size whose
+number of drawn texts has a coefficient of variation over its draws (``text_count_variation``)
+above ``TEXT_COUNT_VARIATION_THRESHOLD`` gets one warning, as a draw of ``draw_human_sample``
+does; its bound covers neither a row's ``bias``, a mean over the defined draws of this run,
+nor its coverage (see ``repeated_study``). The status ``ok`` certifies only that the share of
+undefined draws is within the limit, not that the intervals cover; read ``coverage``. A row of
+``ppi_crossfit`` counts in ``n_rank_deficient_folds`` the inner folds, over its defined draws,
+whose design ``[1, score, covariate]`` had a numerical rank below 3 on their labelled training
+rows, as ``numpy.linalg.lstsq`` with ``rcond=None`` returns it, where the fold kept the
+coefficients that ``lstsq`` returns (see ``pseudo_values``); the other estimators fit no folds
+and count 0. Every row counts in ``n_se_exactly_zero`` its defined draws whose standard error
+is exactly 0. The warnings that the calls of the draws would log one by one for the cases of
+``_open_cases``, such as a fold of that kind or a standard error of exactly 0, are counted
+instead: the study logs one warning for each size whose draws met them, with the count of each
+case, a cross-fit counted once for a draw that serves both estimands. The work on one draw lives
+in ``_study_draws``.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from functools import cached_property
+from functools import partial
 
 import numpy as np
 import pandas as pd
 
-from copernicus.baseline.folds import rng_for
-from copernicus.corrections._clustering import (
-    Clustering,
-    checked_cluster,
-    contributions,
-    mean_covariance,
-)
+from copernicus.corrections._clustering import checked_cluster
 from copernicus.corrections._estimate_inputs import complete_column
+from copernicus.corrections._open_cases import gathered, summary
 from copernicus.corrections._proxy import check_count
-from copernicus.corrections._study_checks import (
-    checked_estimators,
-    checked_sizes,
-    crossfit_clustering,
+from copernicus.corrections._stopped_runs import report_stopped
+from copernicus.corrections._study_checks import checked_estimators, checked_sizes
+from copernicus.corrections._study_draws import (
+    StudyDraw,
+    crossfit_se,
+    draw_estimate,
+    plugged_column,
+    study_draw,
 )
 from copernicus.corrections.data import CorrectionData
-from copernicus.corrections.estimates import (
-    Z,
-    group_difference_ppi,
-    long_short_split,
-    mean_ppi,
-    naive_se,
-    plugin_value,
-)
-from copernicus.corrections.families._fitted import SEED_BOUND
-from copernicus.corrections.families.calibration import fit_ols_line
-from copernicus.corrections.families.pseudo import pseudo_values
-from copernicus.corrections.sampling import attach_draw, draw_from_data
+from copernicus.corrections.estimates import Z, long_short_split, plugin_value
+from copernicus.corrections.group_sizes import warn_if_text_counts_vary
+from copernicus.corrections.sampling import groups_for_quota
 from copernicus.errors import EstimatorError
 
 logger = logging.getLogger(__name__)
@@ -117,93 +120,22 @@ RESULT_COLUMNS = (
     "n_draws",
     "n_undefined",
     "status",
+    "n_rank_deficient_folds",
+    "n_se_exactly_zero",
 )
 UNDEFINED_CEILING = 0.10
 STATUS_OK = "ok"
 STATUS_UNDEFINED = "undefined_share_exceeded"
 SUMMARIES = ("estimate_mean", "bias", "coverage", "se_mean")
 MIN_SIDE = 2
+# The old names in this module of the helpers that _study_draws holds, which code imports from here.
+_Draw = StudyDraw
+_draw = study_draw
+_estimate = draw_estimate
+_plugged_column = plugged_column
+_crossfit_se = crossfit_se
 
 Key = tuple[str, int, str]
-
-
-@dataclass(frozen=True, eq=False)
-class _Draw:
-    """One draw's data and the columns its estimators share, each computed once."""
-
-    data: CorrectionData
-    split: np.ndarray
-    crossfit_seed: int
-
-    @cached_property
-    def raw(self) -> np.ndarray:
-        """The first score column."""
-        return self.data.frame[self.data.score_columns[0]].to_numpy(dtype=float)
-
-    @cached_property
-    def calibrated(self) -> np.ndarray:
-        """The first score column through the line fitted on the labelled texts."""
-        labelled = self.data.labelled_mask
-        line = fit_ols_line(
-            self.raw[labelled], self.data.gold[labelled], self.data.score_columns[0]
-        )
-        return line.predict(self.raw)
-
-    @cached_property
-    def ppi_crossfit(self) -> np.ndarray:
-        """The cross-fitted pseudo-values."""
-        values = pseudo_values(self.data, rectifier="crossfit", seed=self.crossfit_seed)
-        return values.column.to_numpy(dtype=float)
-
-
-def _plugged_column(estimator: str, draw: _Draw) -> np.ndarray:
-    """The column that a naive plug-in estimator (``raw`` or ``calibrated``) uses."""
-    return draw.raw if estimator == "raw" else draw.calibrated
-
-
-def _crossfit_se(column: np.ndarray, split: np.ndarray | None, clustering: Clustering) -> float:
-    """The standard error of the plugged pseudo-values, clustered as ``ppi_identity`` clusters."""
-    if clustering.groups is None:
-        return naive_se(column, split)
-    psi = contributions(column, split)[:, None]
-    return float(np.sqrt(mean_covariance(psi, clustering.groups)[0, 0]))
-
-
-def _estimate(
-    estimator: str, estimand: str, draw: _Draw, cluster: bool | None
-) -> tuple[float, float]:
-    """The point and the standard error of one estimator and estimand on one draw."""
-    split = None if estimand == "mean" else draw.split
-    if estimator == "ppi_identity":
-        result = (
-            mean_ppi(draw.data, cluster=cluster)
-            if split is None
-            else group_difference_ppi(draw.data, split, cluster=cluster)
-        )
-        return result.point, result.se
-    if estimator == "ppi_crossfit":
-        clustering = crossfit_clustering(draw.data, split, cluster)
-        column = draw.ppi_crossfit
-        return plugin_value(column, split), _crossfit_se(column, split, clustering)
-    column = _plugged_column(estimator, draw)
-    return plugin_value(column, split), naive_se(column, split)
-
-
-def _draw(
-    data: CorrectionData,
-    truth: pd.Series,
-    size: int,
-    seed: int,
-    split: np.ndarray,
-    index: int,
-) -> _Draw:
-    """The human sample of one size and index, with the known values of its texts."""
-    draw_seed, crossfit_seed = (
-        int(value)
-        for value in rng_for(seed, "repeated_study", size, index).integers(SEED_BOUND, size=2)
-    )
-    sample = draw_from_data(data, size, seed=draw_seed)
-    return _Draw(data=attach_draw(data, truth, sample), split=split, crossfit_seed=crossfit_seed)
 
 
 @dataclass
@@ -215,17 +147,23 @@ class _Tally:
     pairs: list[tuple[float, float]] = field(default_factory=list)
     undefined: int = 0
     last_reason: str = ""
+    rank_deficient_folds: int = 0
+    zero_se: int = 0
 
-    def record(self, draw: _Draw, cluster: bool | None) -> None:
+    def record(self, draw: StudyDraw, cluster: bool | None) -> None:
         """Estimate on one draw, or count the draw as undefined and keep its reason."""
         name, _, estimand = self.key
         # The one failure the study tolerates: a draw on which the estimator is undefined is
         # counted; a row with too many of them is reported as undefined by its summary.
         try:
-            self.pairs.append(_estimate(name, estimand, draw, cluster))
+            pair = draw_estimate(name, estimand, draw, cluster)
         except EstimatorError as error:
             self.undefined += 1
             self.last_reason = str(error)
+        else:
+            self.pairs.append(pair)
+            self.rank_deficient_folds += draw.rank_deficient_folds(name)
+            self.zero_se += int(pair[1] == 0.0)
 
     @property
     def exceeded(self) -> bool:
@@ -247,6 +185,8 @@ class _Tally:
             "n_draws": self.draws,
             "n_undefined": self.undefined,
             "status": STATUS_UNDEFINED if self.exceeded else STATUS_OK,
+            "n_rank_deficient_folds": self.rank_deficient_folds,
+            "n_se_exactly_zero": self.zero_se,
         }
         if self.exceeded:
             return row
@@ -274,6 +214,23 @@ def repeated_study(
 ) -> pd.DataFrame:
     """Bias and coverage of each estimator over repeated human samples of a fully coded corpus.
 
+    Before the draws of a size, the study measures with ``text_count_variation`` how much the
+    number of drawn texts varies over all draws of its ``m`` of the ``G`` groups: ``c``, the
+    coefficient of variation. The point of the mean of ``ppi_identity`` is a mean ``R`` over the
+    drawn texts plus a constant, so when no draw is refused its bias is at most ``c`` times its
+    standard deviation, both taken over all possible draws: ``R`` times the mean texts per drawn
+    group has a fixed expectation, so ``E[R] - R_corpus = -Cov(R, mean texts per drawn group) /
+    mean_n``, with ``mean_n`` the mean texts per group, which the Cauchy-Schwarz inequality
+    bounds by ``c * sd(R)``. The bound covers neither the ``bias`` of a row, a mean over its
+    defined draws of this run, nor a difference, ``calibrated``, ``ppi_crossfit`` or any
+    coverage. For each size whose ``c`` exceeds ``TEXT_COUNT_VARIATION_THRESHOLD`` (0.1),
+    whatever the number of draws, the study logs one warning, as ``draw_human_sample`` does:
+    read the bias and the coverage of that size's rows and the reasons of their undefined
+    draws. The mean of the identity pseudo-values, ``pseudo_values(data).mean_rectified``, is
+    exactly unbiased over draws. After the draws of a size, one warning gives the count of each
+    case of ``_open_cases`` that its calls met, in place of their own warnings; a study that
+    stops with an error during a size logs it for the draws it finished.
+
     Args:
         data_full: The correction data of the corpus; its own gold column is replaced in every
             draw by the values of ``truth_gold`` on the drawn texts.
@@ -299,9 +256,12 @@ def repeated_study(
         A frame with the columns ``estimator``, ``size``, ``estimand`` (``mean`` or
         ``long_short_difference``), ``truth`` (the full-gold value), ``estimate_mean``,
         ``bias``, ``coverage``, ``se_mean`` (over the defined draws; NaN for a row undefined on
-        more than 10 percent of its draws), ``n_draws``, ``n_undefined`` and ``status`` (``ok``
-        or ``undefined_share_exceeded``), one row per estimator, size and estimand in the
-        orders given.
+        more than 10 percent of its draws), ``n_draws``, ``n_undefined``, ``status`` (``ok``
+        or ``undefined_share_exceeded``), ``n_rank_deficient_folds`` (for ``ppi_crossfit``
+        the inner folds, over the defined draws, of numerical rank below 3; 0 for the
+        other estimators) and ``n_se_exactly_zero`` (the defined draws whose standard error
+        is exactly 0, so that their interval has zero width), one row per estimator, size and
+        estimand in the orders given.
 
     Raises:
         SettingsError: If a size, ``draws``, ``seed``, ``estimators`` or ``cluster`` is outside
@@ -337,10 +297,19 @@ def repeated_study(
     ]
     for size in size_values:
         active = [tally for tally in tallies if tally.key[1] == size]
-        for index in range(draws):
-            draw = _draw(data_full, truth, size, seed, split, index)
-            for tally in active:
-                tally.record(draw, requested)
+        m = groups_for_quota(size, data_full.groups, data_full.ids)
+        warn_if_text_counts_vary(data_full.groups, m, log=logger, caller="study", size=size)
+        counts: Counter[str] = Counter()
+        try:
+            with gathered() as counts:
+                for index in range(draws):
+                    draw = study_draw(data_full, truth, size, seed, split, index)
+                    for tally in active:
+                        tally.record(draw, requested)
+        except BaseException as error:
+            report_stopped(error, partial(_warn_open_cases, size, counts, finished=False))
+            raise
+        _warn_open_cases(size, counts, finished=True)
         logger.info(
             "repeated study: %d draws of size %d, undefined draws %s",
             draws,
@@ -350,6 +319,30 @@ def repeated_study(
     _report_undefined(tallies)
     rows = [tally.summary(truths[tally.key[2]]) for tally in tallies]
     return pd.DataFrame(rows, columns=list(RESULT_COLUMNS))
+
+
+def _warn_open_cases(size: int, counts: Counter[str], *, finished: bool) -> None:
+    """One warning for a size whose draws met cases, in place of the warnings of its calls.
+
+    A study that stopped with an error during the size returns no table, which the warning
+    then says in place of where the table holds the cases.
+    """
+    if not counts:
+        return
+    notes = []
+    if not finished:
+        notes.append("the study stopped with an error during this size and returns no table")
+    elif counts.get("rank_deficient_folds"):
+        notes.append("the column n_rank_deficient_folds holds the folds of each row")
+    if finished and counts.get("se_zero"):
+        notes.append("the column n_se_exactly_zero holds the draws of each row")
+    logger.warning(
+        "repeated study, size %d: of the warnings that its inner calls log one by one when called "
+        "on their own, %s; %s",
+        size,
+        summary(counts),
+        "; ".join(notes),
+    )
 
 
 def _report_undefined(tallies: Sequence[_Tally]) -> None:

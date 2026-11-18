@@ -1,11 +1,12 @@
 """Corrections of machine scores with a human-coded sample.
 
-The data container, the human-sample draw with its inclusion probabilities and its draw file,
-the sample-size planner, the correction families behind one interface with their registry,
-grouped cross-fitting, the estimate-level estimators (prediction-powered means, differences and
-OLS coefficients, moment subtraction, SIMEX, instrumented coding), the repeated-study check and
-the battery that compares the score-level corrections out of sample. The module does not import
-scikit-learn, formulaic or torch at import time.
+The data container, the human-sample draw with its inclusion probabilities, its draw file and
+the variation of its number of texts, the sample-size planner, the correction families behind
+one interface with their registry, grouped cross-fitting, the estimate-level estimators
+(prediction-powered means, differences and OLS coefficients, moment subtraction, SIMEX,
+instrumented coding), the repeated-study check and the battery that compares the score-level
+corrections out of sample. The module does not import scikit-learn, formulaic or torch at
+import time.
 """
 
 from copernicus.corrections.battery import (
@@ -72,6 +73,7 @@ from copernicus.corrections.families import (
     register,
     rubin_pool,
 )
+from copernicus.corrections.group_sizes import TEXT_COUNT_VARIATION_THRESHOLD, text_count_variation
 from copernicus.corrections.planning import SizePlan, plan_sample_size, plan_table
 from copernicus.corrections.sampling import (
     SampleDraw,
@@ -94,6 +96,7 @@ __all__ = [
     "RESULT_COLUMNS",
     "SKIPPED_COLUMNS",
     "SUMMARY_COLUMNS",
+    "TEXT_COUNT_VARIATION_THRESHOLD",
     "BatteryEntry",
     "BatteryResult",
     "BatterySettings",
@@ -153,5 +156,6 @@ __all__ = [
     "scale_test",
     "simex",
     "summarize_battery",
+    "text_count_variation",
     "write_draw",
 ]

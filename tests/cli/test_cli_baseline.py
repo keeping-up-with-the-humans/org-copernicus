@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+from baseline_cli_support import baseline_args, save_world
 from baseline_support import GOLD, World
 from cli_support import option_defaults, summary_value
 from embeddings_support import needs_minilm
@@ -22,27 +23,6 @@ from copernicus.cli.app import app
 
 TOY = toy_corpus_path()
 FLOOR = "10"
-
-
-def save_world(world: World, folder: Path) -> dict[str, Path]:
-    """Write the embedding sets, the texts and the gold of a synthetic world."""
-    stems: dict[str, Path] = {}
-    for name, embedding_set in world.embeddings.items():
-        stems[name] = folder / f"emb_{name}"
-        replace(embedding_set, sidecar=dict(SIDECAR)).save(stems[name])
-    world.table.frame.to_csv(folder / "texts.csv", index=False)
-    world.frame.to_csv(folder / "gold.csv", index=False)
-    return stems
-
-
-def baseline_args(stems: dict[str, Path], folder: Path, out: Path, *extra: str) -> list[str]:
-    """Build the arguments of ``baseline ridge`` on a saved synthetic world."""
-    embeddings = [arg for name, stem in stems.items() for arg in ("--embeddings", f"{name}={stem}")]
-    return [
-        *("baseline", "ridge", *embeddings, "--texts", str(folder / "texts.csv")),
-        *("--gold", str(folder / "gold.csv"), "--gold-column", GOLD, "--unit-id", "text_id"),
-        *("--group-column", "group_id", "--out", str(out), *extra),
-    ]
 
 
 @pytest.fixture(scope="module")
@@ -305,3 +285,56 @@ def test_baseline_on_the_toy_corpus_with_minilm(
     assert skipped["reason"].str.startswith("quota_exceeds_half_units").all()
     curves = pd.read_csv(tmp_path / "results_curves.csv")
     assert list(curves["size"].astype(str)) == ["full"]
+
+
+@pytest.mark.parametrize("suffix", [".csv", ".parquet"])
+@pytest.mark.parametrize("seeds", [(42, 2**63), (-1, 42)], ids=["unsigned", "signed"])
+def test_baseline_writes_seeds_that_one_64_bit_integer_type_holds_exactly(
+    runner: CliRunner,
+    saved_world: tuple[Path, dict[str, Path]],
+    tmp_path: Path,
+    suffix: str,
+    seeds: tuple[int, int],
+) -> None:
+    folder, stems = saved_world
+    out = tmp_path / f"results{suffix}"
+    listed = ",".join(str(seed) for seed in seeds)
+    args = baseline_args(
+        {"alpha": stems["alpha"]},
+        folder,
+        out,
+        *("--sizes", "full", f"--seeds={listed}", "--k-folds", "3"),
+    )
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.stderr
+    read = pd.read_csv if suffix == ".csv" else pd.read_parquet
+    for name in ("results", "results_oof"):
+        table = read(tmp_path / f"{name}{suffix}")
+        assert tuple(int(seed) for seed in table["seed"].drop_duplicates()) == seeds
+
+
+@pytest.mark.parametrize(
+    "seeds",
+    ["-1,9223372036854775808", "42,18446744073709551621"],
+    ids=["negative_and_unsigned", "beyond_64_bits"],
+)
+def test_baseline_refuses_parquet_tables_for_seeds_that_no_64_bit_integer_type_holds(
+    runner: CliRunner, saved_world: tuple[Path, dict[str, Path]], tmp_path: Path, seeds: str
+) -> None:
+    # Such seeds stay Python integers in the tables of the run, and a parquet file has no
+    # integer column for them. The command says so before it fits; a CSV file keeps them.
+    folder, stems = saved_world
+    options = ("--sizes", "full", f"--seeds={seeds}", "--k-folds", "3")
+    one_set = {"alpha": stems["alpha"]}
+    refused = runner.invoke(
+        app, baseline_args(one_set, folder, tmp_path / "results.parquet", *options)
+    )
+    assert refused.exit_code == 1
+    assert f"--seeds {seeds}: these seeds fit no single 64-bit integer type" in refused.stderr
+    assert "give --out a .csv file" in refused.stderr
+    assert list(tmp_path.iterdir()) == []
+    written = runner.invoke(app, baseline_args(one_set, folder, tmp_path / "results.csv", *options))
+    assert written.exit_code == 0, written.stderr
+    for name in ("results", "results_oof"):
+        table = pd.read_csv(tmp_path / f"{name}.csv", dtype={"seed": str})
+        assert list(table["seed"].drop_duplicates()) == seeds.split(",")

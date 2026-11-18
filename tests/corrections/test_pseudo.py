@@ -270,11 +270,12 @@ def test_crossfit_covers_every_row_and_is_reproducible() -> None:
 def test_crossfit_output_is_pinned_for_a_fixed_seed() -> None:
     data, gold = _pool((5,) * 20, seed=4)
     drawn_data, _ = _drawn_data(data, gold, [f"g{i}" for i in range(0, 20, 2)])
-    ghat, columns = crossfit_ghat(drawn_data, k=4, seed=9)
-    assert columns == ("score", "score", "score", "score")
+    found = crossfit_ghat(drawn_data, k=4, seed=9)
+    assert found.columns == ("score", "score", "score", "score")
+    assert found.rank_deficient_folds == ()
     positions = [0, 17, 41, 58, 73, 99]
     expected = [0.11507, 6.586115, 17.219283, 22.457458, 29.86259, 37.686253]
-    np.testing.assert_allclose(ghat[positions], expected, atol=1e-6)
+    np.testing.assert_allclose(found.ghat[positions], expected, atol=1e-6)
 
 
 def test_crossfit_predictions_never_use_the_gold_of_their_own_group() -> None:

@@ -25,6 +25,7 @@ from copernicus.corrections._draw_match import check_draw_matches
 from copernicus.corrections._fingerprint import POPULATION_HASH_PATTERN, population_hash_of
 from copernicus.corrections._messages import list_first_ten
 from copernicus.corrections.data import PI_COLUMN, CorrectionData, numeric_values
+from copernicus.corrections.group_sizes import warn_if_text_counts_vary
 from copernicus.data.table import ONE_GROUP_PER_TEXT
 from copernicus.errors import ConfigurationError, SettingsError
 
@@ -163,10 +164,28 @@ def draw_human_sample(
     to work on.
 
     With groups of unequal size the number of texts drawn varies with the groups drawn, and a
-    draw of a few groups can miss a group that holds a large share of the texts. The
-    prediction-powered mean and difference are then ratio estimators with a bias (see
-    ``mean_ppi``), and their intervals can cover far less often than 95 percent; check such a
-    design with ``repeated_study``.
+    draw of a few groups can miss a group that holds a large share of the texts. A mean over
+    the drawn texts can then be biased (see ``mean_ppi``), and the intervals of the
+    prediction-powered estimators can cover far less often than 95 percent.
+    ``text_count_variation`` measures the variation: ``c``, the coefficient of variation of the
+    number of drawn texts over all draws of ``m`` of the ``G`` groups. The bias of a mean over
+    the drawn texts of a quantity fixed before the draw, ``R``, is at most ``c`` times its
+    standard deviation, both taken over all possible draws: ``R`` times the mean number of
+    texts of a drawn group is the mean of the drawn groups' totals, whose expectation is fixed,
+    so ``E[R] - R_corpus = -Cov(R, mean texts per drawn group) / mean_n``, with ``mean_n`` the
+    mean number of texts per group, and the Cauchy-Schwarz inequality bounds the absolute value
+    of the right side by ``c * sd(R)``. This covers the point of ``mean_ppi`` without power
+    tuning and with a prediction fixed before the draw, provided it refuses no draw (it refuses
+    one with fewer than two labelled texts and, clustered, one whose labelled texts lie in one
+    group). It does not cover a summary over the accepted draws only, a difference (each side
+    has its own bound, see ``text_count_variation``), a power-tuned or cross-fitted estimate,
+    or any coverage. When ``c`` exceeds ``TEXT_COUNT_VARIATION_THRESHOLD`` (0.1), the draw logs
+    one warning that names ``c``, ``m``, ``G`` and the share of the texts that the largest group
+    holds: a signal that the number of drawn texts varies much. ``c`` counts texts, the
+    denominator of the estimators, also when the quota counts another unit. Check such a
+    design with ``repeated_study``, or estimate the mean with
+    ``pseudo_values(data).mean_rectified``, which, with its default ``identity`` rectifier, the
+    recorded ``pi`` and every text of the drawn groups coded, is exactly unbiased over draws.
 
     Args:
         table: The text table; its ``group_id`` column defines the groups. A table built
@@ -204,13 +223,15 @@ def draw_human_sample(
             quota,
             n_units,
         )
+    groups = frame["group_id"].astype(str).to_numpy()
     draw = draw_groups(
         frame["text_id"].astype(str).to_numpy(),
-        frame["group_id"].astype(str).to_numpy(),
+        groups,
         units,
         quota,
         seed=seed,
     )
+    warn_if_text_counts_vary(groups, draw.m, log=logger, caller="draw", size=None)
     grouping = f"; {ONE_GROUP_PER_TEXT}" if table.group_defaulted else ""
     logger.info("drew %d of %d groups (%d texts)%s", draw.m, draw.n_groups, draw.ids.size, grouping)
     return draw

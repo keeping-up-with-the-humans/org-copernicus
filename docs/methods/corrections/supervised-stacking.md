@@ -7,7 +7,7 @@ Because the prediction combines several signals and need not keep the order of a
 ## The algorithm as the library implements it
 
 1. **Features.** Every score column of the data, the covariate (the log of the character count by default), and the spread of the scores: the row-wise population standard deviation of the score columns after standardising each with its mean and standard deviation on the training rows.
-2. **Standardise.** Each feature is centred and divided by its population standard deviation on the training rows; a constant feature keeps a standard deviation of 1 and gets no weight. A training gold that is constant, or features that are all constant, are refused.
+2. **Standardise.** Each feature is centred and divided by its population standard deviation on the training rows; a feature that is constant by `is_constant` (a range at most `1e-12` times the larger of 1 and its largest absolute value) is divided by 1. An exactly constant feature gets the coefficient 0; one that varies within that tolerance keeps its variation and can get a small coefficient. A training gold that is constant, or features that are all constant, are refused.
 3. **Penalty**, by variant, always with an unpenalised intercept:
     - `ridge`: the penalty of `ALPHAS` (41 values from 0.01 to 10^8, evenly spaced on the log scale) with the smallest exact leave-one-group-out error, from the same ridge as the [NLP-ML baseline](../nlp-ml-baseline.md).
     - `lasso`: scikit-learn's `LassoCV` over a path of 12 penalties (`max_iter` 1500, `tol` 0.001), validated on `min(5, groups)` grouped inner splits.

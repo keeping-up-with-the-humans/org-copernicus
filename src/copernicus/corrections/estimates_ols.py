@@ -219,7 +219,8 @@ def ols_outcome_ppi(
         ``standard_errors`` (read-only mappings over the design's columns), ``columns``,
         ``coefficient`` (the reported column), ``prediction``, ``condition_number`` (of the
         moment matrix scaled to a unit diagonal), ``cluster`` (as given), ``clustered`` (the
-        choice made) and, when clustered, ``n_clusters`` and ``n_clusters_labelled``.
+        choice made), when clustered ``n_clusters`` and ``n_clusters_labelled``, and
+        ``se_exactly_zero`` for the reported coefficient (see ``make_estimate``).
 
     Raises:
         SettingsError: If not exactly one of ``formula`` and ``X`` is given, the formula is
@@ -299,8 +300,9 @@ def ols_predictor_ppi(
         ``coefficients``, ``standard_errors``, ``columns`` (``Intercept``, ``construct`` and the
         covariate columns), ``coefficient``, ``prediction``, ``variant``, ``outcome``,
         ``n_base`` (the texts of the base term), ``condition_number`` (as for
-        ``ols_outcome_ppi``), ``cluster``, ``clustered`` and, when clustered, ``n_clusters``
-        (groups of the base texts) and ``n_clusters_labelled``.
+        ``ols_outcome_ppi``), ``cluster``, ``clustered``, when clustered ``n_clusters``
+        (groups of the base texts) and ``n_clusters_labelled``, and ``se_exactly_zero`` (as for
+        ``ols_outcome_ppi``).
 
     Raises:
         SettingsError: If the variant is unknown, both ``covariates`` and ``X`` are given, the

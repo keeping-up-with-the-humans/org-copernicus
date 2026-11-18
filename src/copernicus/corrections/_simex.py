@@ -56,11 +56,13 @@ class Extrapolation:
     Attributes:
         value: The extrapolated value; NaN when the status is ``pole_le_1`` or ``no_fit``.
         pole: The fitted pole ``c``; NaN for ``constant`` and ``no_fit``.
-        status: ``ok`` (an interior pole above 1); ``constant`` (the curve does not vary, its
-            mean is returned); ``linear_limit`` (the best pole is the grid's cap, where the
-            rational curve is a straight line in ``lambda`` and the value is the linear
-            extrapolation); ``pole_le_1`` (undefined); ``no_fit`` (a non-finite curve value,
-            undefined).
+        status: ``ok`` (an interior pole above 1); ``constant`` (the range of the curve is at
+            most ``1e-9`` times its largest absolute value, and its mean is returned);
+            ``linear_limit`` (the best point of the pole grid is its cap, ``pole_max``: the
+            value is that of the rational fit at ``lambda = -1`` with the fitted pole, which
+            lies between the grid point below the cap and the cap; how close that is to a
+            straight-line extrapolation depends on the cap and on the grid of ``lambda``);
+            ``pole_le_1`` (undefined); ``no_fit`` (a non-finite curve value, undefined).
     """
 
     value: float

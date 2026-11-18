@@ -11,8 +11,17 @@ and each deletion is refitted explicitly.
   penalty grid from one thin singular value decomposition ``U s V'`` of the centred fitting
   design: ``beta(alpha) = V diag(s / (s^2 + alpha)) U' (y - mean(y))`` and
   ``prediction = mean(y) + (x - mean(x)) beta``. Singular values at or below ``1e-12``
-  times the largest are dropped. The estimator is scikit-learn's
-  ``Ridge(fit_intercept=True, solver="svd")``.
+  times the larger of the largest singular value and ``1e-300`` are dropped; when none is
+  left, every prediction is the mean of the target. Rounding can leave a centred column
+  that is not zero although its input values are identical, and its direction can survive
+  this cutoff. The fit is the singular-value form of ridge regression with an unpenalised
+  intercept, as scikit-learn's ``Ridge(fit_intercept=True, solver="svd")`` computes it,
+  with this cutoff in place of scikit-learn's own. At a penalty of 0, which the functions
+  accept and the embedding-augmented family never passes (its grid ``ALPHAS`` is positive),
+  the fit is the least-squares solution of smallest norm of the design truncated to the kept
+  directions. Where the design has exact rank below its columns, other coefficients fit the
+  rows equally well; a direction dropped by the cutoff alone can make the truncated fit miss
+  rows that the full design would fit.
 * ``ridge_coefficients``: the same estimator at one penalty, as an intercept and weights,
   for a fit that is applied to new rows later.
 * ``choose_penalty``: the penalty with the smallest mean squared error pooled over all rows

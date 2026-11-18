@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from copernicus.coders.limits import MAX_ABSOLUTE_VALUE, check_value_limit, floats_within_limit
 from copernicus.coders.store_cells import listed_ids
 from copernicus.coders.store_layout import check_layout
 from copernicus.coders.store_schema import (
@@ -34,6 +35,8 @@ from copernicus.errors import ConfigurationError
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "MAX_ABSOLUTE_VALUE",
+    "check_value_limit",
     "construct_scores",
     "export_construct_scores",
     "export_evidence",
@@ -191,11 +194,19 @@ def construct_scores(numeric: pd.DataFrame) -> pd.DataFrame:
     The construct score is the mean of the attribute scores that are not missing, which is
     the single definition used by the exports and by the validity panel. Every row needs its
     run number, which every row of a store written by the library holds: the grouping by run
-    would leave a row without one out without notice, so such a row is refused.
+    would leave a row without one out without notice, so such a row is refused. A finite score
+    above `MAX_ABSOLUTE_VALUE` (1e150) in absolute value is refused before anything is
+    averaged, because the sum of such scores can overflow, and a mean that overflowed would be
+    infinite or missing. A missing score is left out of the mean; an infinite one makes it
+    infinite, and infinities of both signs make it missing. Finite scores in a column of
+    floats narrower than 64 bits whose mean overflows in that width have the mean of their
+    64-bit values; a group with an infinite score keeps the mean of the column's own average.
 
     Args:
         numeric: One row per text, run and attribute with columns ``text_id``,
-            ``run_number`` and ``value`` (float, NaN when the attribute got no score).
+            ``run_number`` and ``value`` (float, NaN when the attribute got no score; a value
+            of another numeric type is read as a float for the limit, and a finite number
+            without a finite float is above it).
 
     Returns:
         Columns ``text_id``, ``run_number``, ``construct_score`` (NaN when no attribute
@@ -204,7 +215,9 @@ def construct_scores(numeric: pd.DataFrame) -> pd.DataFrame:
 
     Raises:
         ConfigurationError: If a row has no run number, naming its texts (the first ten) and
-            what to do.
+            what to do; or, after that check, if a finite score is above the limit in absolute
+            value, naming its texts (the first ten), the largest absolute value, the limit and
+            the remedy (see `check_value_limit`).
     """
     lacking = pd.isna(numeric["run_number"]).to_numpy()
     if lacking.any():
@@ -214,10 +227,24 @@ def construct_scores(numeric: pd.DataFrame) -> pd.DataFrame:
             "cannot tell which of the text's runs they belong to; give every score row its run "
             "number, or drop such rows to leave their scores out"
         )
-    grouped = numeric.groupby(["text_id", "run_number"], sort=True)["value"]
+    ids = numeric["text_id"].to_numpy(dtype=object)
+    values = floats_within_limit("score", numeric["value"], ids)
+    keys = ["text_id", "run_number"]
+    grouped = numeric.groupby(keys, sort=True)["value"]
+    means = grouped.mean().astype("float64")
+    width = getattr(numeric["value"].dtype, "numpy_dtype", numeric["value"].dtype)
+    if width.kind == "f" and width.itemsize < 8:
+        # A sum of finite scores can overflow in the column's own width: the mean of such a
+        # group is taken from the 64-bit values. A mean that was finite and the mean of a group
+        # with an infinite score are kept as they were.
+        infinite = np.isinf(values)
+        wide = numeric[keys].assign(value=np.where(infinite, np.nan, values), infinite=infinite)
+        regrouped = wide.groupby(keys, sort=True)
+        kept = np.isfinite(means) | regrouped["infinite"].any()
+        means = means.where(kept, regrouped["value"].mean())
     table = pd.DataFrame(
         {
-            "construct_score": grouped.mean().astype("float64"),
+            "construct_score": means,
             "n_attributes_scored": grouped.count().astype("int64"),
         }
     )

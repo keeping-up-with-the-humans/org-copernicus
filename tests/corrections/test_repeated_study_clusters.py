@@ -226,7 +226,10 @@ def test_a_side_whose_labelled_texts_lie_in_one_group_leaves_the_crossfit_differ
             estimators=("ppi_identity", "ppi_crossfit"),
         ).set_index(["estimator", "estimand"])
     assert table.loc[("ppi_identity", "long_short_difference"), "n_undefined"] == 1
-    assert "two groups on each side" in caplog.records[0].getMessage()
+    # The corpus has groups of unequal size, so the study also warns about the variation of the
+    # number of drawn texts; the warning about the undefined row is the one checked here.
+    undefined = [text for text in caplog.messages if "is undefined on" in text]
+    assert len(undefined) == 1 and "two groups on each side" in undefined[0]
     assert (table.loc["ppi_crossfit", "n_undefined"] == 0).all()
     truth = pd.Series(data.frame["truth"].to_numpy(), index=data.ids)
     attached = attach_draw(data, truth, sample)

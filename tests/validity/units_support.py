@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 import pytest
 
 from copernicus.data import TextTable
 from copernicus.errors import ConfigurationError
 from copernicus.validity.panel import PanelSettings, validity_panel
+from copernicus.validity.panel_inputs import (
+    indexed_gold,
+    numeric_column,
+    resolve_covariate,
+    resolve_groups,
+    resolve_target_scores,
+)
+from copernicus.validity.panel_targets import TargetResult, compute_target
 
 # The target key is no part of the gold column's name or of any group id, so a message that
 # names one of them cannot pass for naming another.
@@ -112,6 +122,34 @@ def refusal(entries: list[Entry], **changes: object) -> str:
     with pytest.raises(ConfigurationError) as refused:
         validity_panel(scores, gold, table, targets=TARGETS, settings=group_settings(**changes))
     return str(refused.value)
+
+
+def computed(entries: list[Entry], unit: str, runs: pd.DataFrame | None = None) -> TargetResult:
+    """The result of `compute_target` for the target, from the inputs the panel would give it.
+
+    The panel refuses a score, a gold value or a covariate above the library's limit before it
+    calls `compute_target`, so a test of what the function does with larger values calls it
+    directly. ``runs`` replaces the target's rows read from the entries.
+    """
+    scores, gold, table = build(entries)
+    rows = resolve_target_scores(scores, [TARGET])[TARGET] if runs is None else runs
+    gold_by_id = indexed_gold(gold)
+    name, covariate = resolve_covariate(None, gold_by_id, table)
+    groups = resolve_groups(sorted(set(rows["text_id"])), table)
+    settings = PanelSettings(n_boot=N_BOOT, unit=unit)  # type: ignore[arg-type]
+    gold_values = numeric_column(gold_by_id, GOLD, "gold")
+    return compute_target(
+        TARGET,
+        GOLD,
+        rows,
+        gold_values,
+        covariate,
+        name,
+        groups,
+        math.nan,
+        settings,
+        named_groups=groups,
+    )
 
 
 def on_route(long: pd.DataFrame, frame: str) -> pd.DataFrame:

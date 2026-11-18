@@ -9,7 +9,8 @@ would understate it).
 * ``model_draws``: each draw adds ``N(0, sigma_m^2)`` noise to the fitted mean, where
   ``sigma_m^2`` is the residual variance of that draw's bootstrap fit.
 * ``pmm``: each draw replaces the fitted mean of a text by the observed gold value of one
-  of its ``k_donors`` nearest training donors by fitted mean, chosen at random. Every draw
+  of its ``k_donors`` nearest training donors by fitted mean, chosen at random; with fewer
+  training rows than ``k_donors``, every training row is a donor. Every draw
   therefore lies on the support of the observed gold values. The paper's battery fitted
   predictive mean matching beside the model draws, within this family, and the variant ships
   with a note that says so (``REGISTRY["multiple_imputation"].note_for("pmm")``).
@@ -26,6 +27,14 @@ calibration shortfall and noise (the spread is restored in each draw).
 Twenty draws serve as a point correction. Inference with Rubin's rules at a labelled share
 of 2.5 to 5 percent needs 150 or more draws, because the fraction of missing information is
 high.
+
+Only the design of all the training rows is checked for full rank. A bootstrap resample whose
+design has a numerical rank below 3, as ``numpy.linalg.lstsq`` with ``rcond=None`` returns it,
+keeps the coefficients that ``lstsq`` returns, the solution of smallest norm of the directions
+above its cutoff; a resample of no more rows than the three coefficients has its residual sum of
+squares divided by 1 as its residual variance. The provenance counts such resamples, and each
+case logs one warning per fit, which ``run_battery`` counts instead and sums up per entry and size
+(``_open_cases``).
 """
 
 from __future__ import annotations
@@ -39,6 +48,11 @@ from typing import ClassVar, Literal
 import numpy as np
 import pandas as pd
 
+from copernicus.corrections._open_cases import (
+    warn_rank_deficient_resamples,
+    warn_without_residual_df,
+    warn_zero_se,
+)
 from copernicus.corrections._proxy import check_count
 from copernicus.corrections.data import CorrectionData
 from copernicus.corrections.families._draws import DrawModels, fit_ols
@@ -60,6 +74,13 @@ ERRORS_ADDRESSED = ("level_displacement", "calibration_shortfall", "noise")
 ESTIMATE_ERRORS = "confidence-interval coverage via Rubin's rules"
 DESIGN_COLUMNS = 3
 MIN_DRAWS_FOR_INFERENCE = 150
+POOLED_ZERO_SE = (
+    "because the computed within-draw and between-draw variances are both 0; the pooled "
+    "estimate records se_exactly_zero"
+)
+BETWEEN_OK = "ok"
+BETWEEN_SINGLE_DRAW = "single_draw"
+"""The status of a between-draw variance that is NaN because there is one draw."""
 INFERENCE_NOTE = (
     f"inference-grade imputation needs m of {MIN_DRAWS_FOR_INFERENCE} or more at 2.5 to 5 "
     "percent labelled; the default draws serve a point correction"
@@ -94,6 +115,11 @@ class PooledEstimate:
     within: float
     between: float
 
+    @property
+    def se_exactly_zero(self) -> bool:
+        """Whether the computed standard error equals 0."""
+        return self.se == 0.0
+
 
 def rubin_pool(estimates: Sequence[float], variances: Sequence[float]) -> PooledEstimate:
     """Pool per-draw estimates and their variances by Rubin's rules.
@@ -101,8 +127,11 @@ def rubin_pool(estimates: Sequence[float], variances: Sequence[float]) -> Pooled
     The pooled estimate is the mean of the estimates, ``W`` the mean of the variances, ``B``
     the variance of the estimates with divisor ``m - 1``, the total variance
     ``T = W + (1 + 1/m) B`` and the degrees of freedom
-    ``(m - 1) * (1 + W / ((1 + 1/m) B))^2``. Equal estimates give ``B = 0``, ``T = W`` and
-    infinite degrees of freedom.
+    ``(m - 1) * (1 + W / ((1 + 1/m) B))^2``. When the computed ``B`` is 0, ``T = W`` and the
+    degrees of freedom are infinite. When the computed ``W`` and ``B`` are both 0, the standard
+    error is exactly 0: it is returned, the result's ``se_exactly_zero`` is true, and one
+    warning says so. Equal estimates do not always give a computed ``B`` of 0: rounding can
+    leave a tiny positive one, as for three estimates of 0.1.
 
     Args:
         estimates: The estimate from each imputed data set.
@@ -136,7 +165,7 @@ def rubin_pool(estimates: Sequence[float], variances: Sequence[float]) -> Pooled
         df = float("inf")
     else:
         df = (m - 1) * (1.0 + within / ((1.0 + 1.0 / m) * between)) ** 2
-    return PooledEstimate(
+    pooled = PooledEstimate(
         estimate=float(point.mean()),
         variance=total,
         se=float(np.sqrt(total)),
@@ -145,6 +174,9 @@ def rubin_pool(estimates: Sequence[float], variances: Sequence[float]) -> Pooled
         within=within,
         between=between,
     )
+    if pooled.se_exactly_zero:
+        warn_zero_se(logger, "rubin_pool", POOLED_ZERO_SE)
+    return pooled
 
 
 @dataclass(frozen=True, eq=False)
@@ -262,9 +294,16 @@ class MultipleImputation:
             The fitted draws; the provenance holds ``within_variance`` (mean residual
             variance), ``between_variance`` (mean over the training rows of the variance
             across draws, divisor ``m - 1``; an in-sample figure computed on the training
-            rows, NaN for a single draw), ``m_draws``,
-            ``k_donors`` (``None`` for ``model_draws``), ``score_column`` and a note on
-            the number of draws inference needs.
+            rows, NaN for a single draw), ``between_variance_status`` (``ok``, or
+            ``single_draw`` when one draw leaves no variance across draws), ``m_draws``,
+            ``k_donors`` (``None`` for ``model_draws``), ``score_column``, a note on
+            the number of draws inference needs, ``n_rank_deficient_resamples`` (the
+            bootstrap resamples whose design has a numerical rank below 3, as
+            ``numpy.linalg.lstsq`` with ``rcond=None`` returns it) and
+            ``n_resamples_without_residual_df`` (the resamples of no more rows than the three
+            coefficients, whose residual variance is the residual sum of squares divided by
+            1); both are 0 when the case does not occur, and each case logs one warning
+            (counted instead within ``run_battery``).
 
         Raises:
             ConfigurationError: If an id is unknown, repeated or has no gold value.
@@ -282,11 +321,15 @@ class MultipleImputation:
         n_rows = design.shape[0]
         coefficients = np.empty((self.m_draws, DESIGN_COLUMNS))
         variance = np.empty(self.m_draws)
+        rank_deficient = without_df = 0
         donor_means: list[np.ndarray] = []
         donor_gold: list[np.ndarray] = []
         for draw in range(self.m_draws):
             sample = rng.integers(0, n_rows, size=n_rows)
-            coefficients[draw], variance[draw] = fit_ols(design[sample], rows.gold[sample])
+            fitted = fit_ols(design[sample], rows.gold[sample])
+            coefficients[draw], variance[draw] = fitted.coefficients, fitted.residual_variance
+            rank_deficient += int(fitted.rank < DESIGN_COLUMNS)
+            without_df += int(fitted.residual_df < 1)
             if self.variant == "pmm":
                 means = design @ coefficients[draw]
                 order = np.argsort(means, kind="stable")
@@ -305,6 +348,14 @@ class MultipleImputation:
         between = (
             float(np.mean(completed.var(axis=0, ddof=1))) if self.m_draws > 1 else float("nan")
         )
+        label = f"{FAMILY}/{self.variant}"
+        if rank_deficient:
+            counts = (rank_deficient, self.m_draws, n_rows)
+            warn_rank_deficient_resamples(logger, label, counts, rows.column, DESIGN_COLUMNS)
+        if without_df:
+            warn_without_residual_df(
+                logger, label, (without_df, self.m_draws, n_rows), DESIGN_COLUMNS
+            )
         return ImputationFitted(
             column=rows.column,
             models=models,
@@ -316,8 +367,11 @@ class MultipleImputation:
                 "k_donors": self.k_donors if pmm else None,
                 "within_variance": float(variance.mean()),
                 "between_variance": between,
+                "between_variance_status": BETWEEN_OK if self.m_draws > 1 else BETWEEN_SINGLE_DRAW,
                 "mean_coefficients": [float(value) for value in coefficients.mean(axis=0)],
                 "inference_note": INFERENCE_NOTE,
+                "n_rank_deficient_resamples": rank_deficient,
+                "n_resamples_without_residual_df": without_df,
             },
         )
 

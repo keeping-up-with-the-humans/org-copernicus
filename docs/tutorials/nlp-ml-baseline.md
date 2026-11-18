@@ -65,7 +65,7 @@ embeddings_only 42 full <NA>
 embeddings_only 43 full <NA>
 ```
 
-`run_ridge_baseline` takes the embedding sets by encoder name, a frame with `text_id` and the gold column (the table's own frame works), the text table, the settings, and the gold column's name. The result holds four tables.
+`run_ridge_baseline` takes the embedding sets by encoder name, a frame with `text_id` and the gold column (the table's own frame works), the text table, the settings, and the gold column's name. The result holds the tables below, and `splits`, the folds and draws that the run consulted (Step 6).
 
 | Table | Content |
 |-------|---------|
@@ -73,6 +73,8 @@ embeddings_only 43 full <NA>
 | `oof_predictions` | The out-of-fold prediction of every text at size `"full"`, with the penalty used in its fold |
 | `skipped` | The sizes that were not fitted, with the reason |
 | `curves` (through `cop.curves(result)`) | Rank validity by training size, averaged over seeds |
+
+The `seed` columns of `results`, `oof_predictions` and `skipped` hold the seeds' integer values; their dtype can be a signed integer, an unsigned integer or object, so do not assume `int64`.
 
 ### Step 3: read the skips
 
@@ -140,16 +142,44 @@ print(sorted(both.results["variant"].unique()))
 ['embeddings_only', 'embeddings_plus_score']
 ```
 
+### Step 6: run again on the same folds and draws
+
+`result.splits` holds the folds of every seed and every training draw that the run consulted: the draws of every fitted seed and size, and of every one then skipped below the floor. `write_splits` keeps them in a JSON file and `read_splits` reads them back. Passed as `splits`, they take the place of the random generators, so a later run with the same settings gets the same folds, draws and skips, here under another name of the gold column, and the same tables.
+
+<!-- run embed -->
+```python
+cop.baseline.write_splits(result.splits, "splits.json")
+renamed = table.frame.rename(columns={"gold_constructiveness": "constructiveness"})
+again = cop.run_ridge_baseline(
+    {"minilm": texts},
+    renamed,
+    table,
+    settings,
+    gold_column="constructiveness",
+    splits=cop.baseline.read_splits("splits.json"),
+)
+print(again.results.equals(result.results), again.oof_predictions.equals(result.oof_predictions))
+print(sorted(result.splits.draws["size"].unique()))
+```
+
+<!-- output -->
+```text
+True True
+['4', '8', 'full']
+```
+
+Splits of your own, such as the folds of a benchmark or of an earlier study, take the same form, a `cop.baseline.BaselineSplits` of two tables; with `draws=None` the library draws the training texts itself on your folds. The run refuses splits that would break a guarantee of the baseline, such as a group in two folds, and names what does not fit (see the [methods page](../methods/nlp-ml-baseline.md)).
+
 ## On the command line
 
 ```bash
 copernicus embed texts --texts toy_corpus.csv --encoder minilm --out texts_minilm --group-column group_id --device cpu
 copernicus baseline ridge --embeddings minilm=texts_minilm --texts toy_corpus.csv --gold toy_corpus.csv \
     --gold-column gold_constructiveness --group-column group_id --sizes 4,8,full \
-    --floor-units 4 --k-folds 3 --out baseline.csv
+    --floor-units 4 --k-folds 3 --out baseline.csv --write-splits baseline_splits.json
 ```
 
-The command writes `baseline.csv` and, beside it, `baseline_oof.csv`, `baseline_skipped.csv` and `baseline_curves.csv`, with a description in `baseline.csv.json`. In `--embeddings NAME=STEM`, `NAME` must be the encoder recorded in the set. Add `--coder-scores text_scores.csv --coder-score-column construct_score` for the plus-score variant: `text_scores.csv` is the file that `copernicus store export run.sqlite --what text --out text_scores.csv` writes, and `--coder-score-column` names its score column (`score` by default).
+The command writes `baseline.csv` and, beside it, `baseline_oof.csv`, `baseline_skipped.csv` and `baseline_curves.csv`, with a description in `baseline.csv.json`; `--write-splits` writes the folds and draws that the run consulted to `baseline_splits.json`, in the form of `write_splits`. In `--embeddings NAME=STEM`, `NAME` must be the encoder recorded in the set. Add `--coder-scores text_scores.csv --coder-score-column construct_score` for the plus-score variant: `text_scores.csv` is the file that `copernicus store export run.sqlite --what text --out text_scores.csv` writes, and `--coder-score-column` names its score column (`score` by default). Add `--splits baseline_splits.json`, with the same `--seeds`, `--sizes` and `--k-folds`, to run on those folds and draws again; the description records the splits file that a run read, whether folds and a draws table were supplied (`supplied_splits`; a supplied draws table counts also when it is empty or the run uses none of its draws), and the file that the consulted ones were written to (`written_splits`). For parquet output all seeds must fit one 64-bit integer type together, the signed one (`-2**63` to `2**63 - 1`) or the unsigned one (0 to `2**64 - 1`); otherwise the command refuses before it fits. Write CSV for other seeds.
 
 ## What the output means
 
@@ -163,7 +193,7 @@ The command writes `baseline.csv` and, beside it, `baseline_oof.csv`, `baseline_
 - **The default floor is 50 units.** A small corpus needs `floor_units` and smaller `sizes`, as above. Otherwise every size is skipped and the result is empty.
 - **The gold must be complete.** A text with a missing gold value is an error, not a dropped row.
 - **Units must nest in groups.** All texts of a unit belong to one group, because the folds split groups.
-- **Folds and draws are keyed to the seed and to the name of the gold column.** Renaming the gold column changes them. Run several seeds and read the spread (`rank_validity_sd`).
+- **By default, folds and draws are keyed to the seed and to the name of the gold column.** Renaming the gold column changes them, unless you pass the earlier run's `result.splits` as `splits`. Run several seeds and read the spread (`rank_validity_sd`).
 - **The sizes count units.** If your units are groups of several texts, a size of 100 means 100 groups.
 
 ## Next

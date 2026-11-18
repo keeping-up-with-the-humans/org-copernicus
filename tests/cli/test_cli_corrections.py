@@ -11,6 +11,7 @@ import pytest
 from cli_support import option_defaults, summary_value
 from corrections_cli_support import data_args, library_data, write_corpus
 from corrections_support import BATTERY_SCORES
+from text_count_support import DOMINANT_SMALL, texts_frame, written_out
 from typer.testing import CliRunner
 
 from copernicus._version import __version__
@@ -80,6 +81,36 @@ def test_sample_writes_the_drawn_texts_with_pi(
     assert description["draw"]["population_hash"] == table_hash
     both = runner.invoke(app, [*args, "--share", "0.1"])
     assert both.exit_code == 1 and "exactly one of n and share" in both.stderr
+
+
+def test_sample_shows_the_warning_of_uneven_groups_once_and_none_for_equal_groups(
+    runner: CliRunner, files: dict[str, Path], tmp_path: Path
+) -> None:
+    uneven = tmp_path / "uneven.csv"
+    texts_frame(DOMINANT_SMALL).to_csv(uneven, index=False)
+    options = ("--group-column", "group_id", "--seed", "1")
+    shown = runner.invoke(
+        app,
+        [
+            *("corrections", "sample", "--texts", str(uneven), *options, "--n", "4"),
+            *("--out", str(tmp_path / "uneven_sample.csv")),
+        ],
+    )
+    assert shown.exit_code == 0, shown.stderr
+    flat = " ".join(shown.stderr.split())
+    assert flat.count("WARNING") == 1
+    assert flat.count("WARNING copernicus.corrections.sampling:") == 1
+    assert "in a draw of 3 of the 21 groups" in flat
+    assert f"is {written_out(DOMINANT_SMALL, 3):.3g}, above 0.1" in flat
+    equal = runner.invoke(
+        app,
+        [
+            *("corrections", "sample", "--texts", str(files["texts"]), *options, "--n", "100"),
+            *("--out", str(tmp_path / "equal_sample.csv")),
+        ],
+    )
+    assert equal.exit_code == 0, equal.stderr
+    assert "WARNING" not in equal.stderr
 
 
 def test_battery_writes_its_four_tables_and_the_description(

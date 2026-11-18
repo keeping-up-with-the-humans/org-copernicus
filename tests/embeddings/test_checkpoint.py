@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from copernicus.embeddings.checkpoint import (
     read_checkpoint,
     write_checkpoint,
 )
+from copernicus.errors import ConfigurationError
 
 SPEC = EncoderSpec("fake", "org/fake", "mean", 6)
 FRAGMENTS = ["a b", "c d e"]
@@ -78,3 +80,43 @@ def test_the_commit_the_weights_were_loaded_from_changes_the_fingerprint() -> No
     moved = fragments_fingerprint(SPEC, FRAGMENTS, resolved_revision="4567def")
     unknown = fragments_fingerprint(SPEC, FRAGMENTS, resolved_revision="unknown")
     assert len({fingerprint, moved, unknown}) == 3
+
+
+def fingerprint_of_position_zero(spec: EncoderSpec, fragments: list[str], commit: str) -> str:
+    """The digest as it was while cls pooling read position 0: the settings and the fragments."""
+    settings = (
+        *(spec.hf_id, spec.revision, commit, spec.pooling, spec.max_tokens, spec.dtype),
+        *(spec.padding_side, spec.trust_remote_code, len(fragments)),
+    )
+    digest = hashlib.sha256("|".join(str(value) for value in settings).encode("utf-8"))
+    for fragment in fragments:
+        digest.update(b"\x00" + fragment.encode("utf-8"))
+    return digest.hexdigest()
+
+
+@pytest.mark.parametrize("pooling", ["mean", "cls", "last_token"])
+@pytest.mark.parametrize("padding_side", ["right", "left"])
+def test_only_cls_pooling_with_left_padding_leaves_the_earlier_fingerprint(
+    pooling: str, padding_side: str
+) -> None:
+    # With left padding, cls pooling read a padding position for the shorter rows of a batch;
+    # a checkpoint of such rows must not be resumed, so its fingerprint differs from then on.
+    spec = replace(SPEC, pooling=pooling, padding_side=padding_side)  # type: ignore[arg-type]
+    fingerprint = fragments_fingerprint(spec, FRAGMENTS, resolved_revision=COMMIT)
+    earlier = fingerprint_of_position_zero(spec, FRAGMENTS, COMMIT)
+    assert (fingerprint != earlier) == ((pooling, padding_side) == ("cls", "left"))
+
+
+@pytest.mark.parametrize(
+    "weight",
+    [[2.0, -1.0], [2.0, float("nan")], [float("inf"), 3.0]],
+    ids=["negative", "nan", "inf"],
+)
+def test_a_checkpoint_with_a_token_count_that_is_no_count_is_refused(
+    tmp_path: Path, weight: list[float]
+) -> None:
+    fingerprint = fragments_fingerprint(SPEC, FRAGMENTS, resolved_revision=COMMIT)
+    raw = np.arange(8, dtype=np.float64).reshape(2, 4)
+    write_checkpoint(tmp_path / "state", fingerprint, np.array([0, 1]), raw, np.array(weight))
+    with pytest.raises(ConfigurationError, match="token counts must be finite and not negative"):
+        read_checkpoint(tmp_path / "state", fingerprint)

@@ -48,7 +48,7 @@ The build must finish without a warning. This build is a check: the site that is
 
 The accompanying methods paper is under review, so the public repository must hold neither author names nor history that carries them. The public repository is a fresh repository created from `git archive` of `library/`. It is never a clone of the research repository, whose history holds names, and never a `git subtree` or a filtered copy of that history. The accounts that host the repository, run its continuous integration and publish to the package index must not carry a person's name either.
 
-1. Check the name on the package index first, so that a name problem never forces a rebuild and a second export commit. The name on the package index is `org-copernicus`, and the import name stays `copernicus`. Before the first upload, check that `org-copernicus` is still free on the index, or already owned by the project's publishing account; the simple index at `https://pypi.org/simple/org-copernicus/` answers 404 while the name is free. The name `copernicus` itself belongs to a different project and is never used. If `org-copernicus` is taken, choose another name and change every place that names it: run `grep -rnE "org-copernicus|org_copernicus" library` in the research tree and edit each hit, namely `name` in `pyproject.toml`, the install lines of the README and `docs/installation.md`, the glob names in the tests, the hint strings in `src/copernicus/embeddings/encoder.py` and `src/copernicus/llm/vllm_backend.py`, the docstring of `src/copernicus/embeddings/__init__.py`, the dist-info names in section 5 and the CHANGELOG; then run this section from its start.
+1. Check the name on the package index first, so that a name problem never forces a rebuild and a second export commit. The distribution name is `org-copernicus`, and the import name stays `copernicus`. Before the first upload, check that `org-copernicus` is still free on the index, or already owned by the project's publishing account; the simple index at `https://pypi.org/simple/org-copernicus/` answers 404 while the name is free. The name `copernicus` itself belongs to a different project and is never used. If `org-copernicus` is taken, choose another name and change every place that names it: run `grep -rnE "org-copernicus|org_copernicus" library` in the research tree and edit each hit, namely `name` in `pyproject.toml`, the install lines of the README and `docs/installation.md`, the glob names in the tests, the hint strings in `src/copernicus/embeddings/encoder.py` and `src/copernicus/llm/vllm_backend.py`, the docstring of `src/copernicus/embeddings/__init__.py`, the dist-info names in section 5 and the CHANGELOG; then run this section from its start.
 
 2. Before the export, run the anonymity guard from the root of the research repository, on a clean checkout of the commit to export, with the library's development environment and the site that section 3 built:
 
@@ -70,14 +70,14 @@ The accompanying methods paper is under review, so the public repository must ho
    git archive --format=tar --prefix=copernicus/ HEAD:library | tar -x -C /tmp
    ```
 
-4. In `/tmp/copernicus`, review the files and replace the placeholders by the real values:
+4. In `/tmp/copernicus`, review the files. While the paper is under double-blind review, keep every author placeholder and add only the two public addresses:
 
    - `pyproject.toml`: add `[project.urls]` with `Documentation` and `Source`, the URLs of the documentation site and of the repository. The research tree carries no URL table, because the package index refuses a project URL that is not a URL; the `authors` entry changes once the authors may be named;
-   - `CITATION.cff`: the `authors` entries, and add `repository-code` and `url`;
-   - `README.md`: the author line of the citation block (and the same line in `docs/citing.md`), and a link to the repository and to the documentation site;
+   - `CITATION.cff`: add `repository-code` and `url`;
+   - `README.md` and `docs/citing.md`: a link to the repository and to the documentation site; the author line of the citation block stays as it is during review;
    - `mkdocs.yml`: add `site_url` and `repo_url`.
 
-5. Update the tests that pin the placeholders: `test_pyproject_carries_no_project_url_before_the_export`, `test_citation_file_is_valid_and_withholds_the_authors` and `test_readme_cites_the_paper_as_under_review` in `tests/test_docs_assets.py`. Run the suite in the export; `tests/test_no_banned_tokens.py` checks every file for e-mail addresses, user paths, secrets, scheduler flags and planning labels, there as here.
+5. Update the tests that pin the placeholders: `test_pyproject_carries_no_project_url_before_the_export`, `test_citation_file_is_valid_and_withholds_the_authors`, `test_readme_cites_the_paper_as_under_review` and `test_built_wheel_holds_the_marker_the_assets_and_the_console_script` in `tests/test_docs_assets.py`; the wheel test of the export requires both `Project-URL` lines of the metadata, for the documentation and for the repository. Run the suite in the export; `tests/test_no_banned_tokens.py` checks every file for e-mail addresses, user paths, secrets, scheduler flags and planning labels, there as here.
 
 6. Make the first commit under a neutral identity and in UTC, so that neither a name, an e-mail address nor a time zone enters the history:
 

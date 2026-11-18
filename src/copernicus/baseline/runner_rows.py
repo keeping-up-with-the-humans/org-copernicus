@@ -134,7 +134,7 @@ def assemble_tables(
     """
     results = pd.DataFrame(list(rows), columns=result_columns())
     oof = (
-        pd.concat(oof_parts, ignore_index=True)[list(OOF_COLUMNS)]
+        _joined(oof_parts)[list(OOF_COLUMNS)]
         if oof_parts
         else pd.DataFrame(columns=list(OOF_COLUMNS))
     )
@@ -143,6 +143,24 @@ def assemble_tables(
     oof = sort_by_settings(oof, orders, ["encoder_set", "variant", "size", "seed", "fold"])
     skip_table = sort_by_settings(skip_table, orders, ["seed", "size"])
     return typed_sizes(results), typed_sizes(oof), typed_sizes(skip_table)
+
+
+def _joined(parts: Sequence[pd.DataFrame]) -> pd.DataFrame:
+    """Join the out-of-fold parts into one table whose seeds are exact.
+
+    The seed column of a part has one integer type, or holds Python integers. Joined as they
+    are, the columns keep their integer type or take a wider one that holds them all, as a
+    signed and an unsigned column of 8 bits take the signed type of 16 bits; that join is
+    kept. A signed and an unsigned column that no integer type holds together, as those of
+    64 bits, become floats instead, which do not hold every 64-bit integer. Their seeds are
+    then taken from the parts as Python integers and typed as pandas types a list of them:
+    one integer type where one holds them all, objects otherwise.
+    """
+    joined = pd.concat(parts, ignore_index=True)
+    if not pd.api.types.is_float_dtype(joined["seed"].dtype):
+        return joined
+    seeds = [seed for part in parts for seed in part["seed"].tolist()]
+    return joined.assign(seed=pd.Series(seeds, index=joined.index))
 
 
 def summarise_point(

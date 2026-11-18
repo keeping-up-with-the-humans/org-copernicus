@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -143,24 +144,21 @@ def test_an_infinite_run_score_is_refused_beside_finite_runs(key, infinite):
         assert "text(s) 't1' of group 'G1' carry an infinite score value" in message
 
 
+@pytest.mark.parametrize("unit", ["text", "group"])
 @pytest.mark.parametrize("key", [TARGET, "construct", "construct:construct"])
-def test_finite_run_scores_whose_average_overflows_reach_the_group_units_refusal(key):
+def test_finite_run_scores_whose_average_would_overflow_are_refused_by_the_limit(key, unit):
     # t1's run scores of 1e308 are finite, but their sum is larger than the largest float, so its
-    # run average is infinite. Within the panel this and a text without a run with a score are
-    # what reach the group unit's refusal of a run-averaged score that is not finite; the text
-    # unit drops and counts t1, as version 0.1.0 did. errstate keeps numpy's warning of the
-    # overflow from standing in for the panel's error when warnings are turned into errors.
+    # run average would be infinite. Version 0.1.0 dropped and counted t1 under the text unit.
+    # The scores are above the library's limit, so the panel refuses them under both units before
+    # it averages the runs; the overflow tests reach the group unit's refusal of such an average,
+    # and the text unit's drop, through compute_target.
     scores, gold, table = build([("t1", "G1", [1e308, 1e308], 3.0), *SIX_TEXTS[1:]])
-    with np.errstate(over="ignore"):
+    settings = PanelSettings(n_boot=N_BOOT, unit=unit)  # type: ignore[arg-type]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         with pytest.raises(ConfigurationError) as refused:
-            validity_panel(scores, gold, table, targets={key: GOLD}, settings=group_settings())
-        by_text = validity_panel(
-            scores, gold, table, targets={key: GOLD}, settings=PanelSettings(n_boot=N_BOOT)
-        ).frame.iloc[0]
-    message = str(refused.value)
-    assert f"target {key!r}" in message and "'t1' of group 'G1'" in message
-    assert "run-averaged score is not finite" in message
-    assert (by_text["status"], by_text["n_used"], by_text["n_dropped_missing"]) == ("ok", 5, 1)
+            validity_panel(scores, gold, table, targets={key: GOLD}, settings=settings)
+    assert str(refused.value).startswith(f"target {key!r}: text(s) 't1' have a score above 1e+150")
 
 
 @pytest.mark.parametrize("key", [TARGET, "construct", "construct:construct"])
@@ -243,4 +241,4 @@ def test_reduce_to_groups_refuses_a_run_average_that_an_infinite_run_score_makes
         reduce_to_groups(TARGET, GOLD, aligned, groups)
     message = str(refused.value)
     assert "'a' of group 'A'" in message
-    assert "run-averaged score is not finite (no run with a score, or an infinite value" in message
+    assert "run-averaged score is not finite (no run with a score, an infinite value in" in message

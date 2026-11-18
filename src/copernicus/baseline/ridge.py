@@ -17,7 +17,9 @@ matrix by an exact rank-one term (block inverse of the augmented normal equation
 
 with coefficient ``gamma = u' y_c / k`` on ``s`` and ``beta = beta_E - gamma * beta_s`` on
 the embeddings, where ``beta_s`` is the ridge regression of ``s_c`` on the embeddings. Both
-variants therefore share one eigendecomposition per fold.
+variants therefore share one eigendecomposition per fold. The eigenvalues of the centred
+design's Gram matrix (its squared singular values) at or below ``1e-10`` times the larger of
+the largest eigenvalue and ``1e-300`` are dropped, and the fit refuses a design with none left.
 
 Feature scaling is fitted on the training draw only (``fit_scaler``); the stacked variant
 rescales each z-scored encoder block so that every encoder contributes the same total

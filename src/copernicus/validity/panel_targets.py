@@ -22,7 +22,12 @@ from copernicus.validity.anatomy import (
 )
 from copernicus.validity.bootstrap import BootstrapCI, VectorMetric, bootstrap_many
 from copernicus.validity.metrics import Association, association, is_constant
-from copernicus.validity.panel_checks import check_infinite_scores, check_run_numbers, used_texts
+from copernicus.validity.panel_checks import (
+    check_infinite_scores,
+    check_run_numbers,
+    used_texts,
+    warn_overflowing_averages,
+)
 from copernicus.validity.panel_units import rows_per_group, rows_per_text
 from copernicus.validity.reliability import share_of_ceiling
 
@@ -214,16 +219,18 @@ def compute_target(
     text without gold, which is dropped, and is left out of its average). Under
     ``unit="text"`` every text is a row: a scored text whose run-averaged score is missing or
     not finite, or whose gold value or covariate is missing or not finite (or whose id has no
-    gold row), is dropped and counted, never imputed, and the groups are the clusters of the
-    bootstrap.
+    gold row), is dropped and counted, never imputed (one warning names the texts with a gold
+    value whose finite run scores overflow in the average), and the groups are the clusters of
+    the bootstrap.
     Under ``unit="group"`` a scored text without a gold value is dropped and counted the same
     way, and the rows are the groups (see `rows_per_group`): a group's score is the mean over
     its texts that were scored for the target, its covariate the mean of theirs, against the
     one gold value that all the group's texts carry, scored or not, and each group is its own
     cluster; a scored text with a finite gold value whose run-averaged score is not finite (no
     run with a score, or finite run scores whose average overflows) or whose covariate is
-    missing or not finite, a score row of such a text without a run number, or two gold values
-    in one of these groups raise instead (an infinite score was refused first, as said above).
+    missing or not finite, a score row of such a text without a run number, two gold values
+    in one of these groups, or a mean over a group's texts that is not finite although every
+    value in it is raise instead (an infinite score was refused first, as said above).
     The direction, the association, the errors and the intervals are computed on the rows. The noise
     uses the (text, run) rows of the texts that entered only, or under ``unit="group"`` each group's
     mean score in the runs that all its used texts have a score for (see `group_runs`): the run
@@ -260,10 +267,11 @@ def compute_target(
         ConfigurationError: If the bootstrap cannot run (for example fewer than two clusters among
             the used texts), a scored text with a finite gold value has an infinite score or a score
             row without a run number, or under ``unit="group"`` the texts of a group that holds a
-            used text carry more than one gold value, or there is a scored text with a gold value
+            used text carry more than one gold value, there is a scored text with a gold value
             whose run-averaged score is not finite (no run with a score, or finite run scores whose
-            average overflows) or whose covariate is missing or not finite; the message starts with
-            the target name.
+            average overflows) or whose covariate is missing or not finite, or the mean score, the
+            mean score in a run of the noise or the mean covariate of a group is not finite
+            although the values of its texts are; the message starts with the target name.
     """
     prefix = f"target {key!r}: "
     used = used_texts(runs, gold)
@@ -272,7 +280,10 @@ def compute_target(
         check_run_numbers(prefix, runs, used, named_groups)
     values = runs["score"].to_numpy(dtype="float64", na_value=np.nan)
     finite = runs.assign(score=np.where(np.isinf(values), np.nan, values))
-    per_text = finite.groupby("text_id")["score"].mean()
+    # Finite run scores can have a sum that overflows; the unit's own rule reports such a
+    # text, so numpy's warnings of the overflow are turned off for the average.
+    with np.errstate(over="ignore", invalid="ignore"):
+        per_text = finite.groupby("text_id")["score"].mean()
     ids = per_text.index
     aligned = pd.DataFrame(
         {
@@ -285,6 +296,7 @@ def compute_target(
     if settings.unit == "group":
         units = rows_per_group(key, gold_column, runs, aligned, groups, gold)
     else:
+        warn_overflowing_averages(prefix, finite, per_text, used)
         units = rows_per_text(runs, aligned, groups)
     score = units.score
     gold_values = units.gold

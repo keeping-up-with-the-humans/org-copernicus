@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,7 +57,7 @@ class HybridTexts:
             construct.
         summary: ``n_texts``, ``n_short``, ``n_no_evidence``, ``n_evidence`` (texts that
             use their passages), ``mean_words_evidence`` (mean words of those evidence
-            texts, 0.0 when there is none), and ``n_passages_embedded`` (passages in them).
+            texts, NaN when there is none), and ``n_passages_embedded`` (passages in them).
     """
 
     ids: list[str]
@@ -298,7 +299,7 @@ def _assemble(
         "n_short": fallback.count(FALLBACK_SHORT),
         "n_no_evidence": fallback.count(FALLBACK_NO_EVIDENCE),
         "n_evidence": n_evidence,
-        "mean_words_evidence": words / n_evidence if n_evidence else 0.0,
+        "mean_words_evidence": words / n_evidence if n_evidence else math.nan,
         "n_passages_embedded": n_passages,
     }
     return HybridTexts(ids, texts, fallback, attribute_id, summary)

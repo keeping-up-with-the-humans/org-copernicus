@@ -12,7 +12,18 @@ population standard deviation of the rows given and combined by one of four rule
 * ``pc1``: the first principal component of the standardised members.
 
 ``factor`` and ``pc1`` have an arbitrary sign; it is set so that the result does not
-correlate negatively with the mean of the standardised members.
+correlate negatively with the mean of the standardised members. Their provenance records the
+choices that the members can leave open, each with one warning per call, which ``run_battery``
+counts instead and sums up per entry and size (``_open_cases``): a constant mean of the
+standardised members leaves the sign to the decomposition, and a combined column whose computed
+correlation with that mean is at most ``1e-12`` in absolute value, as for two members of unit
+variance that correlate negatively, is treated as not oriented by it
+(``orientation_identified``); two
+largest eigenvalues of a round of the iteration of ``factor``, or two largest singular values of
+``pc1``, that are equal up to a relative ``1e-12`` make the direction count as not unique
+(``direction_unique``, see ``top_two_tied``); and the iteration of ``factor`` can reach its cap
+of 50 rounds without meeting its tolerance (``factor_converged``, with the rounds run in
+``n_factor_rounds``).
 
 The ensemble works on corrected columns, not on texts, so it is not a per-text correction
 and has no factory. Its output is rank-only: ``mean``, ``factor`` and ``pc1`` are on the
@@ -34,12 +45,24 @@ import numpy as np
 import pandas as pd
 
 from copernicus.corrections._messages import list_first_ten
+from copernicus.corrections._open_cases import (
+    warn_not_converged,
+    warn_open_orientation,
+    warn_tied_rounds,
+    warn_tied_singular_values,
+    warn_uncorrelated_orientation,
+)
 from copernicus.corrections.families._factor import (
-    paf_one_factor,
+    ORIENTATION_TOLERANCE,
+    PAF_TOLERANCE,
+    TIE_RELATIVE_TOLERANCE,
+    orientation_correlation,
+    paf_fit,
     regression_factor_score,
     relation_sign,
     standardize_apply,
     standardize_fit,
+    top_two_tied,
 )
 from copernicus.corrections.families._registry import FamilySpec, register
 from copernicus.errors import ConfigurationError, EstimatorError, NotApplicableError, SettingsError
@@ -65,7 +88,16 @@ class EnsembleResult:
             (the names of the members used), ``n_members``, ``dropped_members`` (the names
             of members dropped for a missing or non-finite value or no variation) and, for
             ``factor``, ``loadings``, and for ``pc1``, ``direction`` (each a mapping from
-            member name to value, signed as applied).
+            member name to value, signed as applied). ``factor`` and ``pc1`` also hold
+            ``orientation_identified`` (False when the mean of the standardised members is
+            constant, so that the sign is the one the decomposition gave, or when the combined
+            column's computed correlation with it is at most ``1e-12`` in absolute value,
+            which is treated as too small to identify the sign) and
+            ``direction_unique`` (False when the two largest eigenvalues of a round of the
+            iteration, or the two largest singular values, are equal up to a relative
+            ``1e-12``), and ``factor`` holds ``factor_converged`` (False when the iteration
+            reached its cap of 50 rounds without meeting its tolerance) and
+            ``n_factor_rounds``; each False logs a warning.
     """
 
     column: pd.Series
@@ -241,15 +273,71 @@ class CorrectionEnsemble:
             return _row_mode(matrix, classes), {}
         if self.variant == "factor":
             correlation = standardised.T @ standardised / standardised.shape[0]
-            loadings = paf_one_factor(correlation)
-            score = regression_factor_score(standardised, correlation, loadings)
+            fit = paf_fit(correlation)
+            score = regression_factor_score(standardised, correlation, fit.loadings)
             flip = relation_sign(score, reference)
-            return flip * score, {"loadings": _signed(names, flip, loadings)}
+            oriented = self._oriented(score, reference, "numpy's eigendecomposition")
+            if not fit.direction_unique:
+                tied = len(fit.tied_rounds)
+                warn_tied_rounds(logger, self._method, tied, fit.rounds, TIE_RELATIVE_TOLERANCE)
+            if not fit.converged:
+                warn_not_converged(logger, self._method, fit.rounds, PAF_TOLERANCE)
+            return flip * score, {
+                "loadings": _signed(names, flip, fit.loadings),
+                "orientation_identified": oriented,
+                "direction_unique": fit.direction_unique,
+                "factor_converged": fit.converged,
+                "n_factor_rounds": fit.rounds,
+            }
         centred = standardised - standardised.mean(axis=0)
-        direction = np.linalg.svd(centred, full_matrices=False)[2][0]
+        _, singular, vectors = np.linalg.svd(centred, full_matrices=False)
+        direction = vectors[0]
         score = centred @ direction
         flip = relation_sign(score, reference)
-        return flip * score, {"direction": _signed(names, flip, direction)}
+        oriented = self._oriented(score, reference, "numpy's singular value decomposition")
+        unique = not top_two_tied(singular)
+        if not unique:
+            warn_tied_singular_values(logger, self._method, TIE_RELATIVE_TOLERANCE)
+        return flip * score, {
+            "direction": _signed(names, flip, direction),
+            "orientation_identified": oriented,
+            "direction_unique": unique,
+        }
+
+    @property
+    def _method(self) -> str:
+        """How the warnings name the combiner."""
+        return f"correction ensemble ({self.variant})"
+
+    def _oriented(self, score: np.ndarray, reference: np.ndarray, source: str) -> bool:
+        """Whether the mean of the members fixes the sign, with one warning when it does not."""
+        correlation = orientation_correlation(score, reference)
+        oriented = bool(abs(correlation) > ORIENTATION_TOLERANCE)
+        if oriented:
+            return True
+        open_direction = (
+            "the direction in which the column ranks the texts is then not fixed by the members"
+        )
+        named = (
+            ("the mean of the standardised members", reference),
+            ("the combined column", score),
+        )
+        constant = [name for name, values in named if is_constant(values)]
+        if constant:
+            warn_open_orientation(
+                logger,
+                self._method,
+                f"{' and '.join(constant)} {'is' if len(constant) == 1 else 'are'} constant",
+                "the combined column",
+                source,
+                open_direction,
+            )
+        else:
+            values = (correlation, ORIENTATION_TOLERANCE)
+            warn_uncorrelated_orientation(
+                logger, self._method, "the combined column", named[0][0], values, open_direction
+            )
+        return False
 
 
 SPEC = register(

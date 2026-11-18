@@ -13,7 +13,10 @@ The ``quantile`` variant maps a score through its mid-rank empirical quantile
 deviates from the simplest map, interpolating the sorted training scores against the sorted
 gold values, because that map sends every text of a block of tied (discrete) scores to the
 gold value at the top edge of the block and so biases the mapped level upwards. On scores
-without ties the two maps coincide.
+without ties the two maps coincide. A score below the smallest training score gets the value
+of that score, and a score above the largest the value of the largest: the smallest or the
+largest training gold value when one training text has the score at that end, and the median
+of the ``t`` smallest or largest gold values when ``t`` training texts share it.
 """
 
 from __future__ import annotations

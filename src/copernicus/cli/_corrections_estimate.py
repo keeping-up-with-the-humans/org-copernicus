@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -47,18 +48,25 @@ __all__ = ["estimate"]
 ANALYSIS = "corrected estimate"
 SUFFIX_JSON = ".json"
 N_BOOT_HELP = (
-    "Bootstrap resamples of the standard error; default the estimator's own "
-    f"({library_default(moment_subtraction, 'n_boot')} for moment subtraction and ORIV, "
-    f"{library_default(simex, 'n_boot')} for SIMEX)."
+    "Bootstrap resamples of the standard error, at least --min-defined; default the "
+    f"estimator's own ({library_default(moment_subtraction, 'n_boot')} for moment subtraction "
+    f"and ORIV, {library_default(simex, 'n_boot')} for SIMEX)."
 )
+MIN_DEFINED = library_default(simex, "min_defined")
+BELOW_FLOOR = library_default(simex, "below_floor")
 
 
 def _estimate_rows(found: Estimate, out: Path) -> list[tuple[str, str]]:
-    """The printed summary of an estimate."""
+    """The printed summary of an estimate; one kept without a standard error says so."""
+    if math.isnan(found.se):
+        shown, interval = f"{found.point:.4g} (no standard error)", "none"
+    else:
+        shown = f"{found.point:.4g} (SE {found.se:.4g})"
+        interval = f"[{found.ci_low:.4g}, {found.ci_high:.4g}]"
     return [
         ("method", found.method),
-        ("estimate", f"{found.point:.4g} (SE {found.se:.4g})"),
-        ("95% interval", f"[{found.ci_low:.4g}, {found.ci_high:.4g}]"),
+        ("estimate", shown),
+        ("95% interval", interval),
         ("labelled texts", str(found.n_labelled)),
         ("texts", str(found.n_total)),
         ("file", str(out)),
@@ -181,6 +189,23 @@ def estimate(
         typer.Option("--seed", help="Seed of the bootstrap; default the estimator's own (42)."),
     ] = None,
     n_boot: Annotated[int | None, typer.Option("--n-boot", help=N_BOOT_HELP)] = None,
+    min_defined: Annotated[
+        int | None,
+        typer.Option(
+            "--min-defined",
+            help="Fewest bootstrap resamples with a defined estimate from which the standard "
+            f"error is computed, from 2 to --n-boot; default {MIN_DEFINED}.",
+        ),
+    ] = None,
+    below_floor: Annotated[
+        str | None,
+        typer.Option(
+            "--below-floor",
+            help="What happens with fewer defined resamples: 'refuse' (no estimate) or 'point' "
+            "(the point without a standard error or an interval, null in the file); default "
+            f"'{BELOW_FLOOR}'.",
+        ),
+    ] = None,
     covariate: CovariateOption = COVARIATE,
     text_id_column: TextIdColumn = TEXT_ID,
     text_column: TextColumn = "text",
@@ -196,6 +221,11 @@ def estimate(
     a texts file changed after the draw is refused. Without it, the prediction-powered kinds
     take pi from --pi-column and check only that the coded texts cover whole groups, so a
     regrouped texts file goes unnoticed; the other kinds check nothing of the draw.
+
+    Moment subtraction, SIMEX and ORIV take their standard error from a bootstrap and refuse
+    the estimate when fewer than --min-defined resamples have a defined estimate; with
+    --below-floor point they keep its point and write the standard error and the interval as
+    null.
 
     The estimate is printed and written with its details to --out (.json).
     """
@@ -220,6 +250,8 @@ def estimate(
             variant=variant,
             seed=seed,
             n_boot=n_boot,
+            min_defined=min_defined,
+            below_floor=below_floor,
         )
         check_options(kind, options, pi_column, has_draw=draw is not None)
         given = options.given()

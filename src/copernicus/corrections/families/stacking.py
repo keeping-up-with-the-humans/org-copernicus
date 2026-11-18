@@ -6,8 +6,10 @@ training rows (the standardisation the design applies to them), so that the unit
 do not change the predictions; the research took the spread of the raw score columns. Each
 feature is centred at its computed mean on the training rows and divided by its population
 standard deviation there. A feature whose range is at most ``1e-12`` times the larger of 1
-and its largest absolute value is divided by 1. A constant feature then has no variation on
-the training rows, though rounding can leave it at a constant value other than zero.
+and its largest absolute value is divided by 1. An exactly constant feature then has no
+variation on the training rows, though rounding can leave it at a constant value other than
+zero, and its coefficient is 0; a feature that varies within that tolerance keeps its
+variation and can get a small coefficient.
 A penalised linear regression
 maps the features to the gold value. The penalty type is the variant, and its strength is
 chosen on the training rows alone by validation that never splits a group:

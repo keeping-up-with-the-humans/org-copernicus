@@ -1,8 +1,9 @@
 """NLP-ML baseline: ridge on embeddings with exact grouped leave-one-group-out tuning.
 
 The modules here hold the ridge design, the grouped folds with whole-group draws, the
-unit-level fold metrics, and the runner that fits the baseline over seeds, training sizes and
-encoder sets; importing this package does not import scikit-learn.
+unit-level fold metrics, the folds and draws that a user supplies with their file, and the
+runner that fits the baseline over seeds, training sizes and encoder sets; importing this
+package does not import scikit-learn.
 """
 
 from copernicus.baseline.folds import (
@@ -38,6 +39,8 @@ from copernicus.baseline.runner import (
     curves,
     run_ridge_baseline,
 )
+from copernicus.baseline.splits import BaselineSplits
+from copernicus.baseline.splits_file import read_splits, write_splits
 
 __all__ = [
     "ALPHAS",
@@ -48,6 +51,7 @@ __all__ = [
     "STATUS_KEYS",
     "BaselineResult",
     "BaselineSettings",
+    "BaselineSplits",
     "DrawReceipt",
     "RidgeDesign",
     "RidgeFit",
@@ -61,8 +65,10 @@ __all__ = [
     "grouped_kfold",
     "logo_ridge_fit",
     "predict",
+    "read_splits",
     "rng_for",
     "run_ridge_baseline",
     "size_skip_reason",
     "weighted_over_folds",
+    "write_splits",
 ]

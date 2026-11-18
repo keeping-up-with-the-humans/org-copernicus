@@ -10,11 +10,16 @@ with the gold values on the training rows, and both use population moments (divi
   It addresses the calibration shortfall (the spread is matched to the signal).
 * ``tweedie``: a classical proxy ``X = mean(gold) + (score - mean(score)) / beta`` is built
   from the slope ``beta = cov(score, gold) / var(gold)``; the error variance of the proxy is
-  ``sigma2 = max(var(X) - var(gold), 0)``; the posterior mean under normal error is
+  ``sigma2 = max(var(X) - var(gold), 0)`` (the difference equals
+  ``var(gold) * (1 / rho^2 - 1)`` with ``rho`` the correlation of score and gold, so only
+  rounding can make it negative, and the maximum then sets it to 0); the posterior mean
+  under normal error is
   ``X + sigma2 * dlog f(X) / dX`` with ``f`` a Gaussian kernel density of the training
   proxy (Silverman bandwidth ``1.06 * sd(X) * n^(-1/5)``). The values are then projected
   with an increasing isotonic regression fitted on the score order, so that the correction
-  is monotone in the score and can be applied to any score. A score with negative
+  is monotone in the score and can be applied to any score: a score between two training
+  scores gets the linearly interpolated value, and a score outside the training range gets
+  the value at the nearer end. A score with negative
   covariance with the gold values is refused: reverse it first. Under a normal marginal it
   reduces to the least-squares line. It addresses the calibration shortfall and noise.
 

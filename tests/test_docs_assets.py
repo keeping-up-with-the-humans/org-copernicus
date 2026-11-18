@@ -114,7 +114,7 @@ def test_citation_file_is_valid_and_withholds_the_authors() -> None:
     cff = yaml.safe_load((LIBRARY_ROOT / "CITATION.cff").read_text(encoding="utf-8"))
     assert cff["cff-version"] == "1.2.0"
     assert cff["type"] == "software"
-    assert cff["version"] == "0.2.0"
+    assert cff["version"] == "0.3.0"
     assert cff["license"] == "MIT"
     assert cff["authors"] == [{"name": "Author names withheld"}]
     assert cff["repository-code"] == REPOSITORY_URL

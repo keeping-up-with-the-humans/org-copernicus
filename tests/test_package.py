@@ -73,8 +73,15 @@ def child_blocks(statement: ast.stmt) -> list[list[ast.stmt]]:
 
 
 def expression_nodes(node: ast.AST) -> Iterator[ast.AST]:
-    """Yield a node and the nodes below it, without the body of a lambda, which runs later."""
+    """Yield a node and the nodes below it, without the body of a lambda that runs later.
+
+    The body of a lambda runs when the lambda is called: with the expression for a lambda that
+    is called where it stands, ``(lambda: ...)()``, and later for one that is stored or passed
+    on, whose body is left out.
+    """
     yield node
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Lambda):
+        yield from expression_nodes(node.func.body)
     for field, child in ast.iter_fields(node):
         if isinstance(node, ast.Lambda) and field == "body":
             continue
@@ -171,7 +178,20 @@ def import_time_imports(path: Path) -> list[tuple[int, str]]:
 
 
 def test_version() -> None:
-    assert copernicus.__version__ == "0.2.0"
+    assert copernicus.__version__ == "0.3.0"
+
+
+MAX_MODULE_LINES = 400
+
+
+def test_no_module_of_the_package_its_tests_or_its_examples_exceeds_the_line_limit() -> None:
+    too_long = {}
+    for folder in IMPORTING_FOLDERS:
+        for path in sorted((LIBRARY_ROOT / folder).rglob("*.py")):
+            lines = len(path.read_text(encoding="utf-8").splitlines())
+            if lines > MAX_MODULE_LINES:
+                too_long[path.relative_to(LIBRARY_ROOT).as_posix()] = lines
+    assert too_long == {}
 
 
 def test_every_declared_dependency_is_imported_by_a_module_of_the_package() -> None:
@@ -266,6 +286,22 @@ SCANNED_SOURCES = {
         '    case _ if importlib.import_module("missing_package"):\n'
         "        pass\n",
         [(1, "importlib"), (3, "missing_package")],
+    ),
+    "an import_module call in a lambda that is called where it stands": (
+        'import importlib\nVALUE = (lambda: importlib.import_module("missing_package"))()\n',
+        [(1, "importlib"), (2, "missing_package")],
+    ),
+    "an import_module call in a lambda that is stored": (
+        'import importlib\nLOAD = lambda: importlib.import_module("missing_package")\n',
+        [(1, "importlib")],
+    ),
+    "an import_module call in a lambda that is passed on": (
+        'import importlib\nVALUE = list(map(lambda name: importlib.import_module("x"), []))\n',
+        [(1, "importlib")],
+    ),
+    "a lambda called where it stands inside a lambda that is stored": (
+        'import importlib\nLOAD = lambda: (lambda: importlib.import_module("missing_package"))()\n',
+        [(1, "importlib")],
     ),
 }
 

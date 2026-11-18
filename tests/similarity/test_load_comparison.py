@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -219,7 +220,7 @@ def save_in_the_form_of_version_0_1_0(
     rubric id, its content hash and the binding. It wrote no ``text_form`` and no
     ``texts_hash``.
     """
-    created = "2026-11-01T19:30:00+00:00"
+    created = datetime.fromtimestamp(0, timezone.utc).isoformat()
     text_arrays = {name: getattr(texts, name) for name in TEXT_ARRAYS}
     reference_arrays = {name: getattr(refs, name) for name in REFERENCE_ARRAYS}
     descriptions = (

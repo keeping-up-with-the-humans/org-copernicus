@@ -195,6 +195,10 @@ def test_provenance_reports_the_variances_the_column_and_the_inference_note() ->
 def test_between_variance_of_a_single_draw_is_undefined() -> None:
     fitted = _fit("model_draws", _noisy_line_data(), m_draws=1)
     assert np.isnan(fitted.provenance["between_variance"])
+    assert fitted.provenance["between_variance_status"] == "single_draw"
+    several = _fit("model_draws", _noisy_line_data(), m_draws=2)
+    assert np.isfinite(several.provenance["between_variance"])
+    assert several.provenance["between_variance_status"] == "ok"
     assert fitted.draws(_noisy_line_data(), np.array(["t0001"])).shape == (1, 1)
 
 

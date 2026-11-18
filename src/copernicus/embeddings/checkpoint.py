@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["checkpoint_file", "fragments_fingerprint", "read_checkpoint", "write_checkpoint"]
 
+FIRST_ATTENDED = ("cls", "left")
+"""The pooling and padding side whose rows changed when cls pooling left position 0."""
+FIRST_ATTENDED_MARK = b"cls-first-attended-v1\x00"
+
 
 def checkpoint_file(checkpoint: Path) -> Path:
     """Return the file ``<checkpoint>.npz`` that holds the finished fragments."""
@@ -37,9 +41,15 @@ def fragments_fingerprint(
             repository moved is refused instead of mixing vectors of two commits.
 
     Returns:
-        A hexadecimal digest; a checkpoint is only resumed under the same digest.
+        A hexadecimal digest; a checkpoint is only resumed under the same digest. For cls
+        pooling with left padding the digest also holds a mark of the pooling rule, the first
+        attended token: a checkpoint written while cls pooling read position 0 holds the
+        vector of a padding position for every window shorter than the longest of its batch,
+        and under the mark it is refused, not resumed.
     """
     digest = hashlib.sha256()
+    if (spec.pooling, spec.padding_side) == FIRST_ATTENDED:
+        digest.update(FIRST_ATTENDED_MARK)
     settings = (
         spec.hf_id,
         spec.revision,
@@ -104,8 +114,10 @@ def read_checkpoint(
         checkpoint file.
 
     Raises:
-        ConfigurationError: If the file was made for other texts, another encoder, or
-            another commit of the encoder's model.
+        ConfigurationError: If the file was made for other texts, another encoder, another
+            commit of the encoder's model, or another pooling rule (see
+            `fragments_fingerprint`), or if one of its token counts is not finite or is
+            negative.
     """
     target = checkpoint_file(checkpoint)
     if not target.is_file():
@@ -114,6 +126,13 @@ def read_checkpoint(
         if str(arrays["fingerprint"]) != fingerprint:
             raise ConfigurationError(
                 f"checkpoint {target} belongs to other texts or another encoder (other settings, "
-                "or another commit of the model); delete it or choose another path"
+                "another commit of the model, or a version of the library with another pooling "
+                "rule); delete it or choose another path"
             )
-        return arrays["finished"], arrays["raw"], arrays["weight"]
+        weight = arrays["weight"]
+        if not np.isfinite(weight).all() or np.any(weight < 0):
+            raise ConfigurationError(
+                f"checkpoint {target}: its token counts must be finite and not negative; the "
+                "file is damaged or was not written by this library: delete it"
+            )
+        return arrays["finished"], arrays["raw"], weight

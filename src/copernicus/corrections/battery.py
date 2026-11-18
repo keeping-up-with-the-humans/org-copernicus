@@ -19,7 +19,17 @@ against the gold values of every text, beside the rank validity of that score co
 (``diagnostic = True``, scheme ``whole_data``). Its provenance holds the draw and the means of
 the pseudo-values, with ``lambda_star`` and the tuned mean beside the sentences that say why
 either is missing (``lambda_star_reason``, ``mean_rectified_tuned_reason``, null when defined).
-Estimate-level corrections are not part of the battery.
+Before the seeds, the battery logs one warning for each size whose diagnostic draws have a
+number of texts with a coefficient of variation (``text_count_variation``) above
+``TEXT_COUNT_VARIATION_THRESHOLD``: of the two means it records, ``mean_rectified`` is exactly
+unbiased over draws, and ``mean_rectified_tuned``, a mean over the drawn texts with a weight
+tuned on them, is a ratio whose bias the variation does not bound. The draws of the folds log
+nothing. The fits and combinations of the folds log no warning of the cases that a function
+meets where the data leave a value open (see ``_open_cases``): after the seeds, the battery logs
+one warning for each entry and size whose calls met such cases, with the count of each case,
+while each scored fold's provenance holds the records of its fit; a battery that stops with an
+error logs these warnings for the calls it finished. Estimate-level corrections are not part of
+the battery.
 """
 
 from __future__ import annotations
@@ -33,7 +43,8 @@ import numpy as np
 import pandas as pd
 
 from copernicus._io import json_ready
-from copernicus.corrections.battery_folds import Point, Tables, run_fold
+from copernicus.corrections._stopped_runs import report_stopped
+from copernicus.corrections.battery_folds import Point, Tables, run_fold, warn_counted_cases
 from copernicus.corrections.battery_rows import (
     NO_FOLD,
     RAW_COLUMNS,
@@ -45,10 +56,16 @@ from copernicus.corrections.battery_rows import (
     quota_problem,
     table,
 )
-from copernicus.corrections.battery_settings import BatterySettings, scheme_folds, size_label
+from copernicus.corrections.battery_settings import (
+    BatteryEntry,
+    BatterySettings,
+    scheme_folds,
+    size_label,
+)
 from copernicus.corrections.data import CorrectionData
-from copernicus.corrections.families import get_correction, pseudo_values
-from copernicus.corrections.sampling import attach_draw, draw_from_data
+from copernicus.corrections.families import ScoreCorrection, get_correction, pseudo_values
+from copernicus.corrections.group_sizes import warn_if_text_counts_vary
+from copernicus.corrections.sampling import attach_draw, draw_from_data, groups_for_quota
 from copernicus.errors import ConfigurationError
 from copernicus.validity.metrics import association
 
@@ -100,19 +117,13 @@ seed-clustered standard error and ``n_defined_<gain>``, then ``n_rows``, ``n_see
 class BatteryResult:
     """The tables of ``run_battery`` with the settings they come from.
 
-    The tables are not the paper's battery tables and do not reproduce its numbers: each metric
-    is a mean of per-fold values weighted by the fold's scored texts, where the paper pooled the
-    scaled held-out texts of all folds for its error metrics (so the covariate-linked error here
-    is a mean of fold slopes, not one pooled slope); the native MAE is the mean absolute error
-    per text, where the paper reported the level error ``|mean prediction - mean gold|``. The
-    paper's battery gave each family a minimum number of human-coded texts (for example 100
-    for multiple imputation and 200 for embedding-augmented calibration) and left out a
-    correction's whole evaluation at a seed, scheme and size when the draw of any fold fell
-    below that minimum; this battery applies no such table, while a correction still refuses
-    what its own fit cannot use, such as the misclassification matrix with fewer than 30
-    labelled texts in a category. The ensemble pools the entries fitted in each fold, so its
-    members can change from fold to fold, where the paper admitted only variants fitted on
-    every fold.
+    Each metric is a mean of per-fold values weighted by the fold's scored texts (so the
+    covariate-linked error is a mean of fold slopes, not one pooled slope), and the native MAE
+    is the mean absolute error per text. The battery applies no table of minimum numbers of
+    human-coded texts for the families, while a correction still refuses what its own fit
+    cannot use, such as the misclassification matrix with fewer than 30 labelled texts in a
+    category. The ensemble pools the entries fitted in each fold, so its members can change
+    from fold to fold.
 
     Attributes:
         results: One row per entry, seed, scheme and size with at least one scored fold, with
@@ -213,6 +224,20 @@ def _diagnostic(data: CorrectionData, seed: int, size: int) -> dict[str, object]
     }
 
 
+def _warn_for_diagnostic_draws(data: CorrectionData, settings: BatterySettings) -> None:
+    """Warn once for each integer size whose diagnostic draws vary much in their number of texts.
+
+    The diagnostic draws a size only when every text carries a gold value and the quota is
+    valid, and every seed's draw of a size takes the same number of groups.
+    """
+    if data.n_labelled < data.n:
+        return
+    for size in settings.sizes:
+        if isinstance(size, int) and not quota_problem(size, data.n):
+            m = groups_for_quota(size, data.groups, data.ids)
+            warn_if_text_counts_vary(data.groups, m, log=logger, caller="diagnostic", size=size)
+
+
 def _add_diagnostics(data: CorrectionData, tables: Tables, seed: int, seed_index: int) -> None:
     """Add the diagnostic row, or its skip row, of every integer size of one seed."""
     settings = tables.settings
@@ -234,6 +259,11 @@ def _add_diagnostics(data: CorrectionData, tables: Tables, seed: int, seed_index
 def run_battery(data: CorrectionData, settings: BatterySettings) -> BatteryResult:
     """Compare the corrections of the settings out of sample over seeds, schemes and sizes.
 
+    For each integer size whose diagnostic draws have a number of texts with a coefficient of
+    variation (``text_count_variation``) above ``TEXT_COUNT_VARIATION_THRESHOLD``, one warning is
+    logged before the seeds, whatever the number of seeds and schemes; it says which of the two
+    means that the diagnostic records the bound of the variation leaves out.
+
     Args:
         data: The correction data; the labelled samples are drawn from the texts with a gold
             value and the corrections are scored against the gold values of the held-out
@@ -244,8 +274,11 @@ def run_battery(data: CorrectionData, settings: BatterySettings) -> BatteryResul
 
     Returns:
         The results, the skipped fits and the raw baseline of every scored fold, with the
-        settings as run. The tables are not the paper's battery tables (see ``BatteryResult``
-        for the four ways in which their numbers differ).
+        settings as run (see ``BatteryResult`` for how the tables aggregate and what they
+        include). The warnings that the fits and
+        combinations would log one by one for the cases of ``_open_cases`` are counted
+        instead: after the seeds, one warning for each entry and size gives their counts
+        (also when the battery stops with an error, for the calls it finished).
 
     Raises:
         ConfigurationError: If no text has a gold value, the data have fewer groups than a
@@ -262,7 +295,27 @@ def run_battery(data: CorrectionData, settings: BatterySettings) -> BatteryResul
         entry: get_correction(entry.family, entry.variant, **entry.kwargs)
         for entry in settings.per_text_entries
     }
-    tables = Tables(settings)
+    tables = Tables(settings, count_cases=True)
+    _warn_for_diagnostic_draws(data, settings)
+    try:
+        _run_seeds(data, corrections, tables)
+    except BaseException as error:
+        report_stopped(error, lambda: warn_counted_cases(tables, logger, finished=False))
+        raise
+    warn_counted_cases(tables, logger, finished=True)
+    return BatteryResult(
+        results=table(tables.results, RESULT_COLUMNS),
+        skipped=table(tables.skipped, SKIPPED_COLUMNS),
+        raw=table(tables.raw, RAW_COLUMNS),
+        settings=settings,
+    )
+
+
+def _run_seeds(
+    data: CorrectionData, corrections: dict[BatteryEntry, ScoreCorrection], tables: Tables
+) -> None:
+    """Score every fold of every seed, scheme and size into the tables, then the diagnostics."""
+    settings = tables.settings
     for seed_index, seed in enumerate(settings.seeds):
         for scheme_index, scheme in enumerate(settings.schemes):
             folds = partition(data, scheme, seed)
@@ -284,12 +337,6 @@ def run_battery(data: CorrectionData, settings: BatterySettings) -> BatteryResul
                     len(tables.skipped) - counts[1],
                 )
         _add_diagnostics(data, tables, seed, seed_index)
-    return BatteryResult(
-        results=table(tables.results, RESULT_COLUMNS),
-        skipped=table(tables.skipped, SKIPPED_COLUMNS),
-        raw=table(tables.raw, RAW_COLUMNS),
-        settings=settings,
-    )
 
 
 def _mean_and_se(rows: pd.DataFrame, gain: str) -> tuple[float, float, int]:

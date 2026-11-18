@@ -268,3 +268,17 @@ def test_covariate_slope_refuses_an_unknown_scale_and_unequal_lengths():
         covariate_slope(np.ones(3), np.arange(3.0), "per_unit")
     with pytest.raises(ConfigurationError, match="equal length"):
         covariate_slope(np.ones(3), np.arange(4.0))
+
+
+def test_scores_constant_within_the_tolerance_have_no_noise_on_the_observed_scale():
+    frame = pd.DataFrame(
+        {
+            "text_id": ["a", "a", "b", "b"],
+            "run_number": [1, 2, 1, 2],
+            "score": [1e6, 1e6 + 1e-7, 1e6, 1e6 + 5e-8],
+        }
+    )
+    assert replicate_noise(frame, scale="raw") > 0.0
+    assert replicate_noise(frame, scale="observed") == 0.0
+    varying = frame.assign(score=[1e6, 1e6 + 1e-5, 1e6, 1e6 + 5e-6])
+    assert replicate_noise(varying, scale="observed") > 0.0

@@ -2,7 +2,8 @@
 
 Every estimator returns an ``Estimate``: the point, its standard error, the 95 percent interval
 ``point +/- 1.96 SE``, the sample sizes, the method and a read-only mapping of what else it
-computed.
+computed, which ends with ``se_exactly_zero``: True when the standard error is exactly 0, so
+that the interval has zero width, with one warning (``make_estimate``).
 
 This module holds the prediction-powered (PPI) estimates of a mean and of the difference of two
 group means. With a prediction ``f`` of every text (the first score column unless another is
@@ -54,16 +55,19 @@ from copernicus.corrections._clustering import (
 )
 from copernicus.corrections._estimate_inputs import (
     equal_probability_sample,
+    estimand_parts,
     group_mask,
     long_short_split,
+    naive_se,
+    plugin_value,
     prediction_values,
     require_labelled,
     require_labelled_sides,
 )
+from copernicus.corrections._open_cases import warn_zero_se
 from copernicus.corrections.data import CorrectionData
 from copernicus.corrections.families._registry import FamilySpec, register
 from copernicus.corrections.families.pseudo import tuning_coefficient
-from copernicus.errors import EstimatorError
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,8 @@ ESTIMATE_ERRORS = (
     "bias and coverage of the construct's coefficient as predictor (D) or of means and "
     "differences (C)"
 )
+# The old name in this module of estimand_parts, which code imports from here.
+_parts = estimand_parts
 
 
 @dataclass(frozen=True, eq=False)
@@ -96,15 +102,19 @@ class Estimate:
 
     Attributes:
         point: The estimate.
-        se: Its standard error.
-        ci_low: ``point - Z * se``.
-        ci_high: ``point + Z * se``.
+        se: Its standard error; NaN when the estimator kept the point without one, as
+            ``moment_subtraction``, ``simex`` and ``oriv`` do with ``below_floor="point"``
+            (their details say why).
+        ci_low: ``point - Z * se``, NaN when ``se`` is NaN.
+        ci_high: ``point + Z * se``, NaN when ``se`` is NaN.
         n_labelled: Number of human-coded texts the estimate used.
         n_total: Number of texts in the data.
         method: The estimator, such as ``ppi_mean`` or ``simex``.
         details: What else the estimator computed, as a read-only mapping (each estimator
-            documents its keys). The mapping cannot be changed, and an estimate cannot be
-            pickled because of it; copy it with ``dict(estimate.details)`` to keep it.
+            documents its keys), followed by ``se_exactly_zero``, which ``make_estimate`` adds
+            for every estimator of the library: True when ``se`` is exactly 0. The mapping
+            cannot be changed, and an estimate cannot be pickled because of it; copy it with
+            ``dict(estimate.details)`` to keep it.
     """
 
     point: float
@@ -132,6 +142,14 @@ def make_estimate(
 ) -> Estimate:
     """An estimate with the normal 95 percent interval ``point +/- Z * se``.
 
+    The details are those given with the key ``se_exactly_zero`` set, after the estimator's own
+    keys for every estimator of the library: True when ``se`` is exactly 0, so that ``ci_low``
+    and ``ci_high`` are the point and the interval has zero width, as when the values that the
+    standard error is computed from do not vary; False otherwise, also for a missing (NaN)
+    ``se``, whose reason the estimator's details give. A standard error of exactly 0 is kept and
+    logs one warning, which ``repeated_study`` counts instead and sums up per size
+    (``_open_cases``).
+
     Args:
         point: The estimate.
         se: Its standard error.
@@ -143,6 +161,9 @@ def make_estimate(
     Returns:
         The estimate.
     """
+    exactly_zero = float(se) == 0.0
+    if exactly_zero:
+        warn_zero_se(logger, method)
     return Estimate(
         point=float(point),
         se=float(se),
@@ -151,68 +172,15 @@ def make_estimate(
         n_labelled=int(n_labelled),
         n_total=int(n_total),
         method=method,
-        details=details,
+        details={**details, "se_exactly_zero": exactly_zero},
     )
-
-
-def _parts(values: np.ndarray, split: np.ndarray | None, minimum: int) -> list[np.ndarray]:
-    """The values, or the values on two sides, each with at least ``minimum`` entries."""
-    parts = [values] if split is None else [values[split], values[~split]]
-    sizes = [int(part.size) for part in parts]
-    if min(sizes) < minimum:
-        if split is None:
-            raise EstimatorError(
-                f"the estimand needs at least {minimum} values; there are {sizes[0]}; "
-                "provide more values"
-            )
-        raise EstimatorError(
-            f"the estimand needs at least {minimum} values on each side; the sides hold {sizes}; "
-            "provide more values on the side with too few, or choose another grouping"
-        )
-    return parts
-
-
-def plugin_value(values: np.ndarray, split: np.ndarray | None = None) -> float:
-    """The mean of the values, or the mean where ``split`` is True minus the mean elsewhere.
-
-    Args:
-        values: One value per text.
-        split: ``None`` for the mean, or a boolean mask of the first side.
-
-    Returns:
-        The plug-in value of the estimand.
-
-    Raises:
-        EstimatorError: If there are no values, or a side holds none.
-    """
-    parts = _parts(values, split, 1)
-    if split is None:
-        return float(np.mean(parts[0]))
-    return float(np.mean(parts[0]) - np.mean(parts[1]))
-
-
-def naive_se(values: np.ndarray, split: np.ndarray | None = None) -> float:
-    """The standard error of ``plugin_value`` when the values are independent draws.
-
-    Args:
-        values: One value per text.
-        split: ``None`` for the mean, or a boolean mask of the first side.
-
-    Returns:
-        ``sd / sqrt(n)``, or ``sqrt(var_a / n_a + var_b / n_b)``, with sample moments.
-
-    Raises:
-        EstimatorError: If there are fewer than two values, or a side holds fewer than two.
-    """
-    parts = _parts(values, split, 2)
-    return float(np.sqrt(sum(np.var(part, ddof=1) / part.size for part in parts)))
 
 
 def _term_se(values: np.ndarray, split: np.ndarray | None, groups: np.ndarray | None) -> float:
     """The standard error of one term: of independent texts, or summed within the groups."""
     if groups is None:
         return naive_se(values, split)
-    _parts(values, split, MIN_LABELLED_PER_GROUP)
+    estimand_parts(values, split, MIN_LABELLED_PER_GROUP)
     psi = contributions(values, split)[:, None]
     return float(np.sqrt(mean_covariance(psi, groups)[0, 0]))
 
@@ -298,8 +266,9 @@ def mean_ppi(
         (1 without power tuning), ``plugin`` (the mean of the prediction over every text),
         ``rectifier`` (``lambda_star`` times the prediction's mean on the labelled rows minus
         the gold mean there), so that ``point = lambda_star * plugin - rectifier``, ``cluster``
-        (as given), ``clustered`` (the choice made) and, when clustered, ``n_clusters`` and
-        ``n_clusters_labelled`` (the groups of every text and of the labelled texts).
+        (as given), ``clustered`` (the choice made), when clustered ``n_clusters`` and
+        ``n_clusters_labelled`` (the groups of every text and of the labelled texts), and
+        ``se_exactly_zero`` (see ``make_estimate``).
 
     Raises:
         SettingsError: If ``cluster`` is not a boolean or ``None``.
@@ -353,7 +322,8 @@ def group_difference_ppi(
     Returns:
         The estimate, with method ``ppi_difference`` (``ppi_difference_tuned``) and the details
         of ``mean_ppi`` plus ``n_group`` (texts in the group), ``n_labelled_group`` and
-        ``n_labelled_other`` (labelled texts in the group and outside it).
+        ``n_labelled_other`` (labelled texts in the group and outside it), before
+        ``se_exactly_zero``.
 
     Raises:
         SettingsError: If ``cluster`` is not a boolean or ``None``.

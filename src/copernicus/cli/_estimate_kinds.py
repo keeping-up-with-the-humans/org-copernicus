@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, fields
-from typing import Literal
+from typing import Literal, TypedDict
 
 import numpy as np
 import pandas as pd
@@ -29,6 +29,7 @@ from copernicus.corrections import (
     oriv,
     simex,
 )
+from copernicus.corrections._proxy import BELOW_FLOOR_RULES
 from copernicus.corrections._whole_groups import require_whole_groups
 from copernicus.errors import ConfigurationError, SettingsError
 
@@ -56,7 +57,7 @@ REQUIRED: dict[str, tuple[str, ...]] = {
 }
 PPI_OPTIONS = ("--prediction-column", "--power-tuning", "--cluster")
 PPI_KINDS = ("mean", "difference", "ols-outcome", "ols-predictor")
-BOOT_OPTIONS = ("--seed", "--n-boot")
+BOOT_OPTIONS = ("--seed", "--n-boot", "--min-defined", "--below-floor")
 ALLOWED: dict[str, tuple[str, ...]] = {
     "mean": PPI_OPTIONS,
     "difference": (*PPI_OPTIONS, "--group-column-split", "--long-short"),
@@ -102,6 +103,9 @@ class EstimateOptions:
         variant: ``ppi`` or ``ludwig`` for the predictor regression.
         seed: The seed of the bootstrap (and of the SIMEX noise).
         n_boot: The bootstrap resamples.
+        min_defined: The fewest resamples with a defined estimate that a bootstrap standard
+            error needs.
+        below_floor: ``refuse`` or ``point``: what happens with fewer defined resamples.
     """
 
     prediction_column: str | None = None
@@ -119,6 +123,8 @@ class EstimateOptions:
     variant: str | None = None
     seed: int | None = None
     n_boot: int | None = None
+    min_defined: int | None = None
+    below_floor: str | None = None
 
     def given(self) -> dict[str, object]:
         """The options set on the command line (those not at their default), by their names."""
@@ -144,8 +150,8 @@ def check_options(
         SettingsError: If the kind is unknown, an option it needs is missing, an option it does
             not read is given, a difference names no split or two, the predictor regression
             gets a ``--variant`` other than ``ppi`` and ``ludwig`` or a ``--coefficient`` that
-            is not a position, or a prediction-powered kind has neither ``--draw`` nor
-            ``--pi-column``.
+            is not a position, ``--below-floor`` is neither ``refuse`` nor ``point``, or a
+            prediction-powered kind has neither ``--draw`` nor ``--pi-column``.
     """
     if kind not in KINDS:
         raise SettingsError(f"--kind must be one of {', '.join(KINDS)}; got {kind!r}")
@@ -157,6 +163,10 @@ def check_options(
     if stray:
         verb = "does" if len(stray) == 1 else "do"
         raise SettingsError(f"{', '.join(stray)} {verb} not apply to --kind {kind}")
+    if options.below_floor is not None and options.below_floor not in BELOW_FLOOR_RULES:
+        raise SettingsError(
+            f"--below-floor must be {' or '.join(BELOW_FLOOR_RULES)}; got {options.below_floor!r}"
+        )
     if kind == "difference" and ("--group-column-split" in given) == ("--long-short" in given):
         raise SettingsError("--kind difference needs one of --group-column-split or --long-short")
     if kind == "ols-predictor":
@@ -218,6 +228,29 @@ def _prediction(data: CorrectionData, name: str | None) -> pd.Series | None:
     return pd.Series(values, index=data.ids, name=name)
 
 
+class _BootOptions(TypedDict, total=False):
+    """The bootstrap options given on the command line, by the estimators' parameter names."""
+
+    seed: int
+    n_boot: int
+    min_defined: int
+    below_floor: str
+
+
+def _boot_options(options: EstimateOptions) -> _BootOptions:
+    """The bootstrap options that were given; one that was not keeps the estimator's default."""
+    boot: _BootOptions = {}
+    if options.seed is not None:
+        boot["seed"] = options.seed
+    if options.n_boot is not None:
+        boot["n_boot"] = options.n_boot
+    if options.min_defined is not None:
+        boot["min_defined"] = options.min_defined
+    if options.below_floor is not None:
+        boot["below_floor"] = options.below_floor
+    return boot
+
+
 def _reported(text: str | None) -> str | int | None:
     """The coefficient ``--coefficient`` names: a position for an integer, else a column name."""
     if text is None:
@@ -238,11 +271,7 @@ def run_estimate(kind: str, data: CorrectionData, options: EstimateOptions) -> E
     """
     if kind in PPI_KINDS:
         require_whole_groups(data)
-    boot = {
-        name: value
-        for name, value in (("seed", options.seed), ("n_boot", options.n_boot))
-        if value is not None
-    }
+    boot = _boot_options(options)
     if kind in ("moment-subtraction", "simex"):
         method = moment_subtraction if kind == "moment-subtraction" else simex
         outcome = _needed(options.outcome, "--outcome")

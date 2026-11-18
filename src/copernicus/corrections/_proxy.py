@@ -16,8 +16,11 @@ Stratified bootstrap: each resample draws the labelled rows and the unlabelled r
 with replacement and each to its own count, so every resample keeps the size of the human sample
 and of the corpus. An estimate that is undefined on a resample (it raises ``EstimatorError``) is
 counted and left out; the standard error is the standard deviation of the defined estimates and
-needs at least ``MIN_FINITE_BOOTS`` of them. Texts are resampled, not groups, so the bootstrap
-treats the texts as independent.
+needs at least ``min_defined`` of them, ``MIN_FINITE_BOOTS`` (50) unless the estimator is given
+another floor. With fewer, ``below_floor="refuse"`` refuses the estimate, and
+``below_floor="point"`` keeps its point without a standard error, logs one warning and records
+the status ``too_few_defined``. Texts are resampled, not groups, so the bootstrap treats the
+texts as independent.
 """
 
 from __future__ import annotations
@@ -35,11 +38,21 @@ from copernicus.validity.metrics import is_constant
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "BELOW_FLOOR_RULES",
+    "MIN_DEFINED_LOWEST",
     "MIN_FINITE_BOOTS",
     "MIN_LABELLED",
+    "POINT",
+    "REFUSE",
+    "SE_OK",
+    "SE_TOO_FEW_DEFINED",
     "BootstrapDraws",
+    "BootstrapSE",
+    "BootstrapSettings",
     "ReverseCalibration",
     "bootstrap_se",
+    "bootstrap_standard_error",
+    "check_bootstrap",
     "check_count",
     "reverse_calibrate",
     "sample_covariance",
@@ -48,7 +61,14 @@ __all__ = [
 ]
 
 MIN_FINITE_BOOTS = 50
+# A standard deviation with divisor n - 1 needs two values.
+MIN_DEFINED_LOWEST = 2
 MIN_LABELLED = 3
+REFUSE = "refuse"
+POINT = "point"
+BELOW_FLOOR_RULES = (REFUSE, POINT)
+SE_OK = "ok"
+SE_TOO_FEW_DEFINED = "too_few_defined"
 _NO_LINE = (
     "the score does not covary with gold on the labelled rows: there is no reverse calibration "
     "line and no proxy"
@@ -82,6 +102,49 @@ def check_count(name: str, value: int, minimum: int) -> int:
     if isinstance(value, bool) or not isinstance(value, numbers.Integral) or value < minimum:
         raise SettingsError(f"{name} must be an integer of at least {minimum}; got {value!r}")
     return int(value)
+
+
+@dataclass(frozen=True)
+class BootstrapSettings:
+    """The checked bootstrap settings of a classical estimator.
+
+    Attributes:
+        n_boot: The number of resamples drawn, at least ``min_defined``.
+        min_defined: The fewest resamples with a defined estimate from which the standard
+            error is computed, at least 2.
+        below_floor: What happens with fewer: ``"refuse"`` refuses the estimate, ``"point"``
+            keeps its point without a standard error.
+    """
+
+    n_boot: int
+    min_defined: int
+    below_floor: str
+
+
+def check_bootstrap(n_boot: int, min_defined: int, below_floor: str) -> BootstrapSettings:
+    """Check the bootstrap settings of a classical estimator.
+
+    ``min_defined`` is checked first and ``n_boot`` against it, so under the default floor of
+    50 ``n_boot`` must be at least 50.
+
+    Args:
+        n_boot: Number of resamples.
+        min_defined: The fewest resamples with a defined estimate that a standard error needs.
+        below_floor: ``"refuse"`` or ``"point"``.
+
+    Returns:
+        The settings.
+
+    Raises:
+        SettingsError: If ``min_defined`` is not an integer of at least 2, ``n_boot`` is not
+            an integer of at least ``min_defined``, or ``below_floor`` is neither ``"refuse"``
+            nor ``"point"``.
+    """
+    floor = check_count("min_defined", min_defined, MIN_DEFINED_LOWEST)
+    count = check_count("n_boot", n_boot, floor)
+    if not isinstance(below_floor, str) or below_floor not in BELOW_FLOOR_RULES:
+        raise SettingsError(f"below_floor must be 'refuse' or 'point'; got {below_floor!r}")
+    return BootstrapSettings(n_boot=count, min_defined=floor, below_floor=below_floor)
 
 
 @dataclass(frozen=True, eq=False)
@@ -180,7 +243,8 @@ def stratified_bootstrap(
             ]
         )
         # The one failure tolerated per resample: an estimate that its own rules leave
-        # undefined on this resample is counted, and bootstrap_se refuses too many of them.
+        # undefined on this resample is counted, and the floor of the standard error
+        # (bootstrap_standard_error) decides what too many of them mean.
         try:
             values.append(estimate(rows, in_sample))
         except EstimatorError as error:
@@ -189,23 +253,95 @@ def stratified_bootstrap(
     return BootstrapDraws(values=np.asarray(values, dtype=float), n_undefined=undefined)
 
 
-def bootstrap_se(draws: BootstrapDraws, n_boot: int) -> float:
+def bootstrap_se(
+    draws: BootstrapDraws, n_boot: int, *, min_defined: int = MIN_FINITE_BOOTS
+) -> float:
     """The standard deviation (divisor ``n - 1``) of the defined bootstrap estimates.
 
     Args:
         draws: The bootstrap's defined estimates.
         n_boot: The number of resamples drawn, for the message.
+        min_defined: The fewest defined estimates the standard error needs, at least 2.
 
     Returns:
         The standard error.
 
     Raises:
-        EstimatorError: If fewer than ``MIN_FINITE_BOOTS`` resamples have a defined estimate.
+        SettingsError: If ``min_defined`` is not an integer of at least 2.
+        EstimatorError: If fewer than ``min_defined`` resamples have a defined estimate.
     """
+    floor = check_count("min_defined", min_defined, MIN_DEFINED_LOWEST)
     defined = int(draws.values.size)
-    if defined < MIN_FINITE_BOOTS:
+    if defined < floor:
         raise EstimatorError(
             f"only {defined} of {n_boot} bootstrap resamples have a defined estimate; the "
-            f"standard error needs at least {MIN_FINITE_BOOTS}"
+            f"standard error needs at least {floor}"
         )
     return float(np.std(draws.values, ddof=1))
+
+
+@dataclass(frozen=True, eq=False)
+class BootstrapSE:
+    """The standard error of a stratified bootstrap and the floor that decided it.
+
+    Attributes:
+        se: The standard deviation (divisor ``n - 1``) of the defined estimates; NaN when
+            fewer than ``settings.min_defined`` resamples have a defined estimate, which
+            only ``below_floor="point"`` returns.
+        n_defined: The number of resamples with a defined estimate.
+        settings: The bootstrap settings that applied.
+    """
+
+    se: float
+    n_defined: int
+    settings: BootstrapSettings
+
+    @property
+    def status(self) -> str:
+        """``ok`` when the standard error was computed, ``too_few_defined`` when it was not."""
+        return SE_OK if self.n_defined >= self.settings.min_defined else SE_TOO_FEW_DEFINED
+
+    def details(self) -> dict[str, object]:
+        """The details keys of every bootstrapped estimate: the floor, the rule, the status."""
+        return {
+            "min_defined": self.settings.min_defined,
+            "below_floor": self.settings.below_floor,
+            "se_status": self.status,
+        }
+
+
+def bootstrap_standard_error(
+    draws: BootstrapDraws, settings: BootstrapSettings, *, method: str, log: logging.Logger
+) -> BootstrapSE:
+    """The standard error of the defined estimates, refused or left out below the floor.
+
+    Args:
+        draws: The bootstrap's defined estimates.
+        settings: The checked bootstrap settings.
+        method: The estimator's name, which opens the warning.
+        log: The estimator's module logger, which logs the warning.
+
+    Returns:
+        The standard error with its counts and settings. When fewer than
+        ``settings.min_defined`` resamples are defined and ``below_floor`` is ``"point"``, the
+        standard error is NaN, its status is ``too_few_defined``, and one warning that names
+        the counts is logged.
+
+    Raises:
+        EstimatorError: If fewer than ``settings.min_defined`` resamples are defined and
+            ``below_floor`` is ``"refuse"``.
+    """
+    defined = int(draws.values.size)
+    if defined >= settings.min_defined or settings.below_floor == REFUSE:
+        se = bootstrap_se(draws, settings.n_boot, min_defined=settings.min_defined)
+        return BootstrapSE(se=se, n_defined=defined, settings=settings)
+    log.warning(
+        "%s: only %d of %d bootstrap resamples have a defined estimate, fewer than the %d that "
+        "a standard error needs (min_defined), so the estimate keeps its point and has no "
+        "standard error and no interval (below_floor='point')",
+        method,
+        defined,
+        settings.n_boot,
+        settings.min_defined,
+    )
+    return BootstrapSE(se=float("nan"), n_defined=defined, settings=settings)

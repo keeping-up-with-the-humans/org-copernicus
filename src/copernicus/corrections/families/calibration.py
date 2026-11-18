@@ -7,7 +7,10 @@ correlation with the gold values on the training rows:
   ranks of the scores unchanged.
 * ``covariate_augmented``: ``gold ~ 1 + score + covariate``. The covariate term can move
   the ranks.
-* ``platt``: a logistic regression of the larger gold class on the score; the predicted
+* ``platt``: scikit-learn's logistic regression of the larger gold class on the score,
+  with an L2 penalty on the slope at ``C = 1`` and none on the intercept, so the slope stays
+  finite also for classes that the score separates, and the fit is not the unpenalised
+  maximum likelihood; the predicted
   probability ``p`` is placed on the gold scale as ``lo + p * (hi - lo)`` with the two gold
   values ``lo < hi`` (the probability itself for 0/1 gold). It applies only to binary gold.
 * ``isotonic``: scikit-learn's isotonic regression, a monotone piecewise-linear map: the fit
@@ -46,7 +49,10 @@ __all__ = ["LinePredictor", "RegressionCalibration", "fit_ols_line"]
 FAMILY = "regression_calibration"
 VARIANTS = ("linear", "covariate_augmented", "platt", "isotonic")
 PLATT_MAX_ITER = 1000
+PLATT_C = 1.0
+"""The inverse strength of the L2 penalty of ``platt``, scikit-learn's default."""
 DESIGN_COLUMNS = 3
+LINE_COLUMNS = 2
 ERRORS_ADDRESSED = ("level_displacement", "calibration_shortfall", "covariate_linked_error")
 VARIANT_ERRORS = {
     "linear": ("level_displacement", "calibration_shortfall"),
@@ -94,12 +100,30 @@ def fit_ols_line(score: np.ndarray, gold: np.ndarray, column: str) -> LinePredic
         The fitted line.
 
     Raises:
-        EstimatorError: If the score is constant, so that no slope is defined.
+        EstimatorError: If the score is constant, so that no slope is defined, or if the
+            design ``[1, score]`` has a numerical rank below 2 although the score varies, as
+            ``numpy.linalg.lstsq`` with ``rcond=None`` returns it for the two columns as they
+            are. That happens when the score's values are very large beside 1 (a standard
+            deviation of 1e16 around 0) or vary very little beside their mean (a mean of 1e8
+            with a standard deviation of 1). The coefficients of smallest norm that ``lstsq``
+            returns for such a design need not be the least-squares line, so none is returned.
+            A design of rank 2 is fitted; the rank does not certify the accuracy of a line
+            fitted to values that are very large beside their spread.
     """
     if is_constant(score):
         raise EstimatorError(f"score column {column!r} is constant on the training rows: no line")
     design = np.column_stack([np.ones_like(score), score])
-    beta, *_ = np.linalg.lstsq(design, gold, rcond=None)
+    beta, _, rank, _ = np.linalg.lstsq(design, gold, rcond=None)
+    if rank < LINE_COLUMNS:
+        raise EstimatorError(
+            f"score column {column!r}: the design of intercept and score has the numerical rank "
+            f"{int(rank)} of {LINE_COLUMNS} on the training rows although the score varies, by "
+            "the cutoff of numpy.linalg.lstsq with rcond=None on the two columns as they are: "
+            "the score's values are very large beside 1, or they vary very little beside their "
+            "mean. The coefficients of smallest norm that lstsq returns for such a design need "
+            "not be the least-squares line, so no line is returned; centre the score and "
+            "rescale it to a spread near 1"
+        )
     return LinePredictor(intercept=float(beta[0]), slope=float(beta[1]), column=column)
 
 
@@ -161,7 +185,7 @@ def _fit_platt(rows: TrainingRows) -> ScoreFitted:
     from sklearn.linear_model import LogisticRegression
 
     classes = np.unique(rows.gold)
-    model = LogisticRegression(max_iter=PLATT_MAX_ITER)
+    model = LogisticRegression(C=PLATT_C, max_iter=PLATT_MAX_ITER)
     model.fit(rows.score.reshape(-1, 1), (rows.gold == classes[1]).astype(int))
 
     low, high = float(classes[0]), float(classes[1])

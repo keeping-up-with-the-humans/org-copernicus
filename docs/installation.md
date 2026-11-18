@@ -2,11 +2,11 @@
 
 ## Requirements
 
-The library needs Python 3.10 or later. It needs no GPU and no API key for anything in this documentation.
+The library needs Python 3.10 or later. Among its dependencies it requires `formulaic` 1.2.2 or later, which installing the package brings along. It needs no GPU and no API key for anything in this documentation.
 
 ## Install the package
 
-Install the package from its root folder, the one that holds `pyproject.toml`. The name on the package index is `org-copernicus`; the import name and the command are `copernicus`. `pip install org-copernicus` installs the package once a release has been uploaded to the package index; none has been uploaded so far; until then it is installed from its root folder or from a wheel built there:
+Install the package from its root folder, the one that holds `pyproject.toml`. The distribution name is `org-copernicus`; the import name and the command are `copernicus`. `pip install org-copernicus` installs the package once a release has been uploaded to the package index; none has been uploaded so far; until then it is installed from its root folder or from a wheel built there:
 
 ```bash
 pip install .

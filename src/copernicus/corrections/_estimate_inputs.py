@@ -2,7 +2,9 @@
 
 Every estimator reads its columns through these helpers, so the refusals read the same
 everywhere: an unknown or non-numeric column, a prediction or grouping that does not cover every
-text, a labelled sample without inclusion probabilities, too few labelled rows.
+text, a labelled sample without inclusion probabilities, too few labelled rows. The plug-in
+value of a mean or a difference and its standard error for independent texts, which
+``estimates`` exports, live here with the check of their number of values.
 """
 
 from __future__ import annotations
@@ -23,9 +25,12 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "complete_column",
     "equal_probability_sample",
+    "estimand_parts",
     "group_mask",
     "long_short_split",
+    "naive_se",
     "outcome_values",
+    "plugin_value",
     "prediction_values",
     "require_labelled",
     "require_labelled_sides",
@@ -257,3 +262,56 @@ def equal_probability_sample(data: CorrectionData, method: str) -> np.ndarray:
             "by each text's pi"
         )
     return labelled
+
+
+def estimand_parts(values: np.ndarray, split: np.ndarray | None, minimum: int) -> list[np.ndarray]:
+    """The values, or the values on two sides, each with at least ``minimum`` entries."""
+    parts = [values] if split is None else [values[split], values[~split]]
+    sizes = [int(part.size) for part in parts]
+    if min(sizes) < minimum:
+        if split is None:
+            raise EstimatorError(
+                f"the estimand needs at least {minimum} values; there are {sizes[0]}; "
+                "provide more values"
+            )
+        raise EstimatorError(
+            f"the estimand needs at least {minimum} values on each side; the sides hold {sizes}; "
+            "provide more values on the side with too few, or choose another grouping"
+        )
+    return parts
+
+
+def plugin_value(values: np.ndarray, split: np.ndarray | None = None) -> float:
+    """The mean of the values, or the mean where ``split`` is True minus the mean elsewhere.
+
+    Args:
+        values: One value per text.
+        split: ``None`` for the mean, or a boolean mask of the first side.
+
+    Returns:
+        The plug-in value of the estimand.
+
+    Raises:
+        EstimatorError: If there are no values, or a side holds none.
+    """
+    parts = estimand_parts(values, split, 1)
+    if split is None:
+        return float(np.mean(parts[0]))
+    return float(np.mean(parts[0]) - np.mean(parts[1]))
+
+
+def naive_se(values: np.ndarray, split: np.ndarray | None = None) -> float:
+    """The standard error of ``plugin_value`` when the values are independent draws.
+
+    Args:
+        values: One value per text.
+        split: ``None`` for the mean, or a boolean mask of the first side.
+
+    Returns:
+        ``sd / sqrt(n)``, or ``sqrt(var_a / n_a + var_b / n_b)``, with sample moments.
+
+    Raises:
+        EstimatorError: If there are fewer than two values, or a side holds fewer than two.
+    """
+    parts = estimand_parts(values, split, 2)
+    return float(np.sqrt(sum(np.var(part, ddof=1) / part.size for part in parts)))

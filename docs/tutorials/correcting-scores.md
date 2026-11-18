@@ -170,7 +170,7 @@ The command writes `battery.csv`, and beside it `battery_skipped.csv`, `battery_
 
 - **Rank validity does not move under a monotone correction.** A line with a positive slope, and the other monotone maps, keep the order of the texts. Corrections help the level and the spread of the score, and they help a covariate-linked error only if they model the covariate. Raising rank validity needs a different or an additional score, such as several scores pooled by the stacking or the ensemble.
 - **Use the native-scale error to see a level shift.** The 0-to-1 errors of the validity panel scale the score and the gold by their own ranges, so an affine correction leaves them unchanged. The battery's `mae_native` measures the error on the gold scale, where the shift shows.
-- **The battery tables are not the paper's tables.** The battery averages per-fold values, weighted by the fold's scored texts. The paper pooled the held-out texts of all folds for its error metrics and averaged the rank correlations over the folds, as the library does. Do not compare the numbers with the paper's tables. See the [methods pages](../methods/index.md).
+- **How the battery averages.** The battery averages per-fold values, weighted by the fold's scored texts, and its native error is the mean absolute error per text. See the [methods pages](../methods/index.md).
 - **Marginal matching is a comparability tool.** It gives a score the gold's mean and spread. It does not make a single text's value more accurate.
 
 ## Pitfalls

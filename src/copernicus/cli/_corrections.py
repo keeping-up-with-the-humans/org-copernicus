@@ -99,7 +99,13 @@ def sample(
     """Draw the texts a human should code: whole groups by simple random sampling.
 
     Give exactly one of --n and --share. Every text of a drawn group has the inclusion
-    probability pi = m / G; code the drawn texts and keep pi beside the gold values.
+    probability pi = m / G; code the drawn texts and keep pi beside the gold values. A warning
+    on standard error says when the number of drawn texts varies much with the groups drawn (a
+    coefficient of variation above 0.1 over all draws). The prediction-powered mean without
+    power tuning and with a score as its prediction then has a bias of at most that number
+    times its standard deviation, over all possible draws with none refused; the number gives
+    no such bound for a difference, a power-tuned estimate or an estimate whose prediction is
+    fitted on the draw, and it says nothing about coverage.
 
     The drawn texts go to --out with their group and pi, the draw to <out>.json: its ids,
     groups, pi and the fingerprint of the table's texts and groups. That file binds the coded

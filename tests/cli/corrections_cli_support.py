@@ -13,6 +13,7 @@ from copernicus.cli._embedding_options import read_table
 from copernicus.cli._inputs import read_gold
 from copernicus.cli.app import app
 from copernicus.corrections import CorrectionData
+from copernicus.data import read_frame
 
 SCORES = ",".join(BATTERY_SCORES)
 N_DRAWN = 120
@@ -82,10 +83,10 @@ def estimate_args(files: dict[str, Path], gold: Path, out: Path, *extra: str) ->
 def library_data(
     files: dict[str, Path], gold: Path | None = None, **options: object
 ) -> CorrectionData:
-    """The correction data the commands build from the same files."""
+    """The correction data the commands build from the same files, read as they read them."""
     table = read_table(files["texts"], "text_id", "text", "group_id")
     return CorrectionData.from_scores(
-        pd.read_csv(files["scores"]),
+        read_frame(files["scores"], protected_columns=("text_id",)),
         table,
         read_gold(gold or files["gold"]),
         gold_column="gold",

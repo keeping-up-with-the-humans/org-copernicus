@@ -12,7 +12,7 @@ The examples run on a laptop CPU, with the fake backend for the LLM coders and t
 | [One-stage LLM coder](one-stage-llm-coder.md) | Scores each attribute in one model call, without passages |
 | [Similarity coder](similarity-coder.md) | Scores a text by the cosine of its embedding to reference texts of the two poles |
 | [Hybrid coder](hybrid-coder.md) | Rebuilds each text from the verified passages of a two-stage run and scores it by similarity |
-| [NLP-ML baseline](nlp-ml-baseline.md) | Predicts the human values of the human-coded texts from embeddings with a ridge regression, out of fold, as the benchmark the coders are read against; in the library it scores no other text, and [embedding-augmented calibration](corrections/embedding-augmented-calibration.md) scores a corpus from the same kind of fit, as the paper did with the baseline before correcting the estimates built on it |
+| [NLP-ML baseline](nlp-ml-baseline.md) | Predicts the human values of the human-coded texts from embeddings with a ridge regression, out of fold, as the benchmark the coders are read against; in the library it scores no other text, and [embedding-augmented calibration](corrections/embedding-augmented-calibration.md) scores a corpus from the same kind of fit |
 
 [The validity panel](validity-panel.md) checks any of these scores against human values: rank validity, the four score errors, a reliability ceiling, and intervals from a bootstrap of whole groups.
 

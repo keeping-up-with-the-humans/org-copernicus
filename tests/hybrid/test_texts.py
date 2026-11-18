@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import replace
 from pathlib import Path
 
@@ -102,7 +103,7 @@ def test_texts_below_min_words_stay_raw_and_are_marked_short(
     assert everything.fallback == ["short"] * len(table)
     assert everything.texts == [table.text_of(text_id) for text_id in table.ids()]
     assert everything.summary["n_short"] == len(table) and everything.summary["n_evidence"] == 0
-    assert everything.summary["mean_words_evidence"] == 0.0
+    assert math.isnan(everything.summary["mean_words_evidence"])
     default = evidence_texts(coded_store, rubric, table, granularity="construct")
     short = [int(n) < 40 for n in table.frame["n_words"]]
     assert [f == "short" for f in default.fallback] == short and any(short) and not all(short)
@@ -267,6 +268,20 @@ def test_passages_are_ordered_filtered_and_deduplicated_across_markers(
     assert by_attribute["reasoning"].fallback == ["no_evidence", "", "no_evidence"]
     assert by_attribute["reasoning"].texts[1] == "Because of this."
     assert by_attribute["specificity"].fallback == ["no_evidence"] * 3
+
+
+def test_the_mean_words_of_an_attribute_without_evidence_texts_is_missing(
+    coded_store: Path, rubric: Rubric, table: TextTable, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first, second, third = hand_made_evidence(table, monkeypatch)
+    sub = table.subset([first, second, third])
+    by_attribute = evidence_texts(coded_store, rubric, sub, granularity="attribute", min_words=1)
+    assert isinstance(by_attribute, dict)
+    none = by_attribute["specificity"].summary
+    assert (none["n_texts"], none["n_evidence"], none["n_no_evidence"]) == (3, 0, 3)
+    assert none["n_passages_embedded"] == 0 and math.isnan(none["mean_words_evidence"])
+    tone = by_attribute["tone"].summary
+    assert (tone["n_evidence"], tone["mean_words_evidence"]) == (1, 6.0)
 
 
 def test_passages_with_the_same_start_are_ordered_by_their_end_then_by_their_ids(

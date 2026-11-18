@@ -73,8 +73,9 @@ def covariate_slope(diff: np.ndarray, covariate: np.ndarray, scale: str = "stand
     """The covariate-linked error: the least-squares slope of a signed error on the covariate.
 
     The slope uses sample moments (ddof=1) over the rows where both arrays are finite. On the
-    ``standardized`` scale it is per standard deviation of the covariate (the slope on the
-    z-scored covariate, which equals ``cov(diff, z)``); on the ``raw`` scale it is per unit.
+    ``standardized`` scale it is per standard deviation of the covariate: the slope per unit
+    times the covariate's computed sample standard deviation, which in exact arithmetic is
+    the slope on the z-scored covariate, ``cov(diff, z)``. On the ``raw`` scale it is per unit.
     ``score_errors`` reports this slope for ``score01 - gold01``, and the correction battery
     for the train-scaled errors of the held-out texts.
 
@@ -111,10 +112,12 @@ def score_errors(
     Score and gold are each min-max scaled with their own observed minimum and maximum
     over the rows where score, gold and covariate are all finite, as in the paper's
     analysis. The calibration shortfall is therefore relative to those observed ranges: an
-    exact affine compression of gold shows no shortfall, while noise in the score does.
-    The covariate-linked error is the sample-variance (ddof=1) least-squares slope of the
-    signed error on the covariate; on the ``standardized`` scale the covariate is z-scored
-    first, which equals ``cov(diff, z)``.
+    exact affine compression of gold shows no shortfall in exact arithmetic, while noise in
+    the score can; the computed value is subject to rounding, and a score that counts as
+    constant is refused. The covariate-linked error is the sample-variance (ddof=1)
+    least-squares slope of the signed error on the covariate; on the ``standardized`` scale
+    that slope is multiplied by the covariate's computed sample standard deviation, which in
+    exact arithmetic is the slope on the z-scored covariate, ``cov(diff, z)``.
 
     Args:
         score: Score values.
@@ -216,7 +219,9 @@ def replicate_noise(
     ``scale="observed"`` the scores are first min-max scaled to 0-1 with the observed
     minimum and maximum over every finite row of the frame (all texts and runs, a text
     with a single run included), which puts the noise on the 0-1 scale of the other score
-    errors; scores that are all the same have no run-to-run variation and give 0.
+    errors; scores that are constant by ``is_constant`` (a range at most ``1e-12`` times the
+    larger of 1 and the largest absolute value) are treated as having no range to scale by
+    and give 0, also when they differ within that tolerance.
 
     Args:
         frame: One row per text and run.

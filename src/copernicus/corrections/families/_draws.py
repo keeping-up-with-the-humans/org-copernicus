@@ -9,14 +9,55 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DrawModels", "fit_ols"]
+__all__ = ["DrawModels", "OlsFit", "fit_ols"]
 
 
-def fit_ols(design: np.ndarray, gold: np.ndarray) -> tuple[np.ndarray, float]:
-    """Least-squares coefficients and the residual variance with ``n - p`` degrees of freedom."""
-    beta, *_ = np.linalg.lstsq(design, gold, rcond=None)
+@dataclass(frozen=True, eq=False)
+class OlsFit:
+    """A least-squares fit with its rank and the rows minus the columns of its design.
+
+    Attributes:
+        coefficients: The coefficients that ``numpy.linalg.lstsq`` with ``rcond=None`` returns:
+            it leaves out the directions of the design below its cutoff and returns the solution
+            of smallest norm of what remains.
+        residual_variance: The residual sum of squares divided by ``residual_df``, or by 1 when
+            ``residual_df`` is below 1.
+        rank: The numerical rank of the design that ``numpy.linalg.lstsq`` returns, the number
+            of its directions above the cutoff; below the columns also for a design of full rank
+            in exact arithmetic whose smallest direction lies below the cutoff.
+        residual_df: The rows minus the columns of the design; the divisor of the residual
+            variance is the larger of it and 1. For a design below full column rank it is
+            smaller than the rows minus the rank.
+    """
+
+    coefficients: np.ndarray
+    residual_variance: float
+    rank: int
+    residual_df: int
+
+
+def fit_ols(design: np.ndarray, gold: np.ndarray) -> OlsFit:
+    """Least-squares coefficients and the residual variance with the divisor ``max(n - p, 1)``.
+
+    ``n - p`` is the rows minus the columns of the design. With as many rows as columns, or
+    fewer, the variance is the residual sum of squares divided by 1.
+
+    Args:
+        design: The design, one row per observation.
+        gold: The values fitted.
+
+    Returns:
+        The coefficients, the residual variance, the rank and the rows minus the columns.
+    """
+    beta, _, rank, _ = np.linalg.lstsq(design, gold, rcond=None)
     residual = gold - design @ beta
-    return beta, float(residual @ residual) / max(design.shape[0] - design.shape[1], 1)
+    residual_df = design.shape[0] - design.shape[1]
+    return OlsFit(
+        coefficients=beta,
+        residual_variance=float(residual @ residual) / max(residual_df, 1),
+        rank=int(rank),
+        residual_df=residual_df,
+    )
 
 
 def _pmm_draw(
@@ -28,6 +69,7 @@ def _pmm_draw(
 ) -> np.ndarray:
     """Observed gold of one of the ``k_donors`` donors nearest in fitted mean.
 
+    With fewer donors than ``k_donors``, every donor can be drawn.
     ``uniform`` holds one number in ``[0, 1)`` per text and picks the donor among the nearest.
     """
     n_donors = donor_means.size

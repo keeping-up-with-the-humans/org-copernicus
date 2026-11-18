@@ -10,7 +10,7 @@ The inversion divides by sensitivity plus specificity minus one, Youden's J, so 
 2. **Cutting the score.** On the training rows, the best score column is cut at its quantiles at the cumulative shares of the gold categories, so the cut score has the category shares of the gold.
 3. **Confusion matrix.** `P(predicted i | true j)` is estimated on the training rows with one added count per cell, `(hits + 1) / (n_j + k)`. The priors are the category shares of the training gold.
 4. **Posterior means.** For each predicted category, Bayes' rule gives the probability of each true category, and the corrected value is the mean of the category values under it. `predict` returns the posterior mean of a text's predicted category.
-5. **Category shares.** `class_shares(data, ids)` returns the share of each predicted category among the given texts and, for two categories, the sensitivity and specificity of the training rows and the Rogan-Gladen share of the category with the larger value, clipped to 0 to 1 (missing, with a note, when sensitivity equals one minus specificity).
+5. **Category shares.** `class_shares(data, ids)` returns the share of each predicted category among the given texts and, for two categories, the sensitivity and specificity of the training rows and the Rogan-Gladen share of the category with the larger value, clipped to 0 to 1 (missing, with a note, when sensitivity plus specificity minus one is at most `1e-12` in absolute value).
 
 ## Assumptions and what it corrects
 

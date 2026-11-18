@@ -59,7 +59,7 @@ TEXT_THAT_BEGINS_LIKE_A_HANDLED_TAG: tuple[tuple[str, str], ...] = (
     ("heading", "a <h2o bottle> please"),
     ("image", "the <imgsrc folder> moved"),
     ("link", "<about us> page"),
-    ("legacy_reference_in_a_word", "Kind&regards, Sam"),
+    ("legacy_reference_in_a_word", "Kind&regards, reader"),
     ("legacy_references_in_a_link", "https://example.org/?a=1&copy=2&para=3"),
     ("undefined_reference", "the &notaname; stays"),
 )
@@ -111,9 +111,9 @@ REAL_MARKUP: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "quoted_post",
-        '<aside class="quote">\n<div class="title">\n<img alt="" src="/face.png"> ann:</div>\n'
+        '<aside class="quote">\n<div class="title">\n<img alt="" src="/face.png"> user:</div>\n'
         "<blockquote>\n<p>Earlier words</p>\n</blockquote>\n</aside>\n<p>My answer &amp; more</p>",
-        "ann:\n> \nEarlier words\nMy answer & more",
+        "user:\n> \nEarlier words\nMy answer & more",
     ),
     ("white_space", "a  b\n\n\n\nc\n   d\t e", "a b\nc\nd\t e"),
     ("greater_than_inside_a_quoted_attribute", '<a title="x>y" href="z">link</a> end', "link end"),

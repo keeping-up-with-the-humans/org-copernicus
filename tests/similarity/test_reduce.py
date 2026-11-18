@@ -273,3 +273,26 @@ def test_the_exact_solver_is_the_one_handed_to_the_decomposition(
     if solver == "covariance_eigh" and _pca_solver(rows, columns, "m") == "full":
         solver = "full"  # a scikit-learn before 1.5, which has no covariance_eigh
     assert handed == [(solver, solver)], handed
+
+
+def test_a_column_that_does_not_vary_adds_nothing_to_the_component() -> None:
+    matrix = np.random.default_rng(3).normal(size=(40, 3))
+    with_constant = np.column_stack([matrix, np.full(40, 0.25)])
+    scores = reduce_matrix(matrix, "pca", "a pole")
+    assert np.allclose(reduce_matrix(with_constant, "pca", "a pole"), scores, atol=1e-12)
+
+
+def test_without_varying_row_means_the_scores_keep_the_sign_of_the_decomposition() -> None:
+    from sklearn.decomposition import PCA
+    from sklearn.preprocessing import StandardScaler
+
+    from copernicus.similarity.reduce import _pca_solver
+
+    column = np.random.default_rng(3).normal(size=40)
+    mirror = np.column_stack([column, -column])
+    assert float(np.ptp(mirror.mean(axis=1))) == 0.0
+    solver = _pca_solver(40, 2, "a pole")
+    decomposed = PCA(n_components=1, svd_solver=solver).fit_transform(
+        StandardScaler().fit_transform(mirror)
+    )[:, 0]
+    assert np.array_equal(reduce_matrix(mirror, "pca", "a pole"), decomposed)

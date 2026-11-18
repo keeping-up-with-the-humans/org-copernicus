@@ -86,6 +86,11 @@ class PseudoValues:
             that says why it is missing.
         mean_rectified_tuned_reason: ``None`` when ``mean_rectified_tuned`` is defined;
             otherwise one sentence that says why it is missing and names every cause.
+        n_rank_deficient_folds: For ``crossfit``, the number of inner folds whose design
+            ``[1, score, covariate]`` has a numerical rank below 3 on their labelled training
+            rows, as ``numpy.linalg.lstsq`` with ``rcond=None`` returns it (a warning names
+            them); 0 when there is none, and for ``identity`` and ``calibrated``, which have no
+            folds.
     """
 
     column: pd.Series
@@ -99,6 +104,7 @@ class PseudoValues:
     n_labelled: int
     lambda_star_reason: str | None = None
     mean_rectified_tuned_reason: str | None = None
+    n_rank_deficient_folds: int = 0
 
 
 def inclusion_probabilities(
@@ -152,15 +158,16 @@ def _calibrated_ghat(data: CorrectionData, score_column: str | None) -> tuple[np
 
 def _predictions(
     data: CorrectionData, rectifier: str, score_column: str | None, k: int, seed: int
-) -> tuple[np.ndarray, str]:
-    """The prediction of every row and the name of the column it reads."""
+) -> tuple[np.ndarray, str, int]:
+    """The prediction of every row, the column it reads and its folds of numerical rank below 3."""
     if rectifier == "identity":
         column = score_column or data.score_columns[0]
-        return data.frame[column].to_numpy(dtype=float), column
+        return data.frame[column].to_numpy(dtype=float), column, 0
     if rectifier == "calibrated":
-        return _calibrated_ghat(data, score_column)
-    ghat, chosen = crossfit_ghat(data, k=k, seed=seed)
-    return ghat, "|".join(sorted(set(chosen)))
+        calibrated, column = _calibrated_ghat(data, score_column)
+        return calibrated, column, 0
+    found = crossfit_ghat(data, k=k, seed=seed)
+    return found.ghat, "|".join(sorted(set(found.columns))), len(found.rank_deficient_folds)
 
 
 def _constant_prediction(ghat_labelled: np.ndarray) -> str:
@@ -271,7 +278,11 @@ def pseudo_values(
     the gold values on those rows. ``crossfit`` predicts every row from a model that did not
     see its group's gold values (``gold ~ 1 + score + covariate`` fitted by grouped inner
     folds, the column chosen on a group-level half of each fold's labelled groups); it ignores
-    ``score_column``.
+    ``score_column``. A fold whose design has a numerical rank below 3 on its labelled training
+    rows, as ``numpy.linalg.lstsq`` with ``rcond=None`` returns it, keeps the coefficients that
+    ``lstsq`` returns, the solution of smallest norm of the directions above its cutoff;
+    ``n_rank_deficient_folds`` counts such folds, and a warning names them (within
+    ``repeated_study`` one warning per size sums such warnings up).
 
     Where ``ghat`` is constant on the labelled rows, the tuning coefficient is undefined:
     ``lambda_star`` and ``mean_rectified_tuned`` are NaN, ``lambda_star_reason`` and
@@ -310,7 +321,9 @@ def pseudo_values(
     if not labelled.any():
         raise EstimatorError("pseudo-values need at least one labelled text; none carries gold")
     pi = inclusion_probabilities(data, labelled)
-    ghat, column_name = _predictions(data, rectifier, _named_column(data, score_column), k, seed)
+    ghat, column_name, rank_deficient = _predictions(
+        data, rectifier, _named_column(data, score_column), k, seed
+    )
     gold = data.gold
     correction = np.zeros(data.n)
     correction[labelled] = (gold[labelled] - ghat[labelled]) / pi[labelled]
@@ -357,6 +370,7 @@ def pseudo_values(
         n_labelled=int(labelled.sum()),
         lambda_star_reason=weight_reason,
         mean_rectified_tuned_reason=tuned_reason,
+        n_rank_deficient_folds=rank_deficient,
     )
 
 

@@ -2,18 +2,40 @@
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 import pytest
-from estimates_support import CLASSICAL_SLOPE, classical_data
+from estimates_support import (
+    CLASSICAL_SLOPE,
+    SPARSE_BOOT,
+    SPARSE_SEED,
+    classical_data,
+    replay,
+    sparse_covariation_data,
+)
 
-from copernicus.corrections import CorrectionData, estimates_classical, moment_subtraction, simex
+from copernicus.corrections import (
+    CorrectionData,
+    Estimate,
+    estimates_classical,
+    moment_subtraction,
+    simex,
+)
 from copernicus.corrections._simex import LAMBDAS, POLE_MAX, Extrapolation, rational_extrapolate
 from copernicus.errors import ConfigurationError, EstimatorError, SettingsError
 
 pytestmark = pytest.mark.filterwarnings("error")
 
 GRID = np.asarray(LAMBDAS)
+CLASSICAL: dict[str, Callable[..., Estimate]] = {
+    "moment_subtraction": lambda data, **options: moment_subtraction(
+        data, "outcome", score_column="score_a", **options
+    ),
+    "simex": lambda data, **options: simex(data, "outcome", score_column="score_a", **options),
+}
 
 
 def test_the_extrapolant_recovers_the_exact_classical_curve() -> None:
@@ -173,3 +195,102 @@ def test_the_outcome_must_be_numeric_and_complete() -> None:
         moment_subtraction(CorrectionData(frame=frame, score_columns=data.score_columns), "label")
     with pytest.raises(ConfigurationError, match="finite"):
         moment_subtraction(data, "gold")
+
+
+@pytest.mark.parametrize("name", sorted(CLASSICAL))
+def test_the_default_still_refuses_fewer_than_50_defined_resamples(name: str) -> None:
+    data = sparse_covariation_data(0)
+    _, values = replay(name, data, seed=SPARSE_SEED, n_boot=SPARSE_BOOT)
+    with pytest.raises(EstimatorError) as refusal:
+        CLASSICAL[name](data, n_boot=SPARSE_BOOT, seed=SPARSE_SEED)
+    assert str(refusal.value) == (
+        f"only {len(values)} of {SPARSE_BOOT} bootstrap resamples have a defined estimate; the "
+        "standard error needs at least 50"
+    )
+
+
+@pytest.mark.parametrize("name", sorted(CLASSICAL))
+def test_a_floor_of_10_takes_the_deviation_of_exactly_the_defined_resamples(name: str) -> None:
+    data = sparse_covariation_data(0)
+    _, values = replay(name, data, seed=SPARSE_SEED, n_boot=SPARSE_BOOT)
+    assert 10 <= len(values) < SPARSE_BOOT / 2
+    estimate = CLASSICAL[name](data, n_boot=SPARSE_BOOT, seed=SPARSE_SEED, min_defined=10)
+    assert estimate.se == pytest.approx(float(np.std(values, ddof=1)), rel=1e-12)
+    assert estimate.ci_low == pytest.approx(estimate.point - 1.96 * estimate.se, rel=1e-12)
+    details = estimate.details
+    assert (details["n_boot"], details["n_boot_defined"], details["n_boot_undefined"]) == (
+        SPARSE_BOOT,
+        len(values),
+        SPARSE_BOOT - len(values),
+    )
+    assert (details["min_defined"], details["below_floor"], details["se_status"]) == (
+        10,
+        "refuse",
+        "ok",
+    )
+
+
+@pytest.mark.parametrize("name", sorted(CLASSICAL))
+def test_below_the_floor_the_point_is_kept_without_an_interval(
+    name: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    data = sparse_covariation_data(0)
+    point, values = replay(name, data, seed=SPARSE_SEED, n_boot=SPARSE_BOOT)
+    with caplog.at_level(logging.WARNING, logger="copernicus"):
+        kept = CLASSICAL[name](data, n_boot=SPARSE_BOOT, seed=SPARSE_SEED, below_floor="point")
+    [warning] = [record for record in caplog.records if record.levelno >= logging.WARNING]
+    assert warning.levelno == logging.WARNING
+    assert warning.name == "copernicus.corrections.estimates_classical"
+    message = warning.getMessage()
+    assert message.startswith(f"{name}: only {len(values)} of {SPARSE_BOOT} bootstrap resamples")
+    assert "fewer than the 50" in message
+    reached = CLASSICAL[name](data, n_boot=SPARSE_BOOT, seed=SPARSE_SEED, min_defined=10)
+    assert kept.point == reached.point == pytest.approx(point, rel=1e-12)
+    assert np.isnan(kept.se) and np.isnan(kept.ci_low) and np.isnan(kept.ci_high)
+    assert (kept.n_labelled, kept.n_total, kept.method) == (20, 300, name)
+    details = kept.details
+    assert (details["n_boot"], details["n_boot_defined"], details["n_boot_undefined"]) == (
+        SPARSE_BOOT,
+        len(values),
+        SPARSE_BOOT - len(values),
+    )
+    assert (details["min_defined"], details["below_floor"], details["se_status"]) == (
+        50,
+        "point",
+        "too_few_defined",
+    )
+
+
+@pytest.mark.parametrize("name", sorted(CLASSICAL))
+def test_the_floor_and_the_rule_below_it_are_checked(name: str) -> None:
+    data = classical_data(2, n_texts=200, n_labelled=40)
+    call = CLASSICAL[name]
+    for floor in (1, 0, True, 10.0, "10"):
+        with pytest.raises(SettingsError, match="min_defined must be an integer of at least 2"):
+            call(data, n_boot=60, min_defined=floor)
+    with pytest.raises(SettingsError, match="n_boot must be an integer of at least 61; got 60"):
+        call(data, n_boot=60, min_defined=61)
+    with pytest.raises(SettingsError, match="n_boot must be an integer of at least 10; got 9"):
+        call(data, n_boot=9, min_defined=10)
+    for rule in ("pont", "Point", None, 1):
+        with pytest.raises(SettingsError, match="below_floor must be 'refuse' or 'point'"):
+            call(data, below_floor=rule)
+    accepted = call(data, n_boot=10, min_defined=10)
+    assert (accepted.details["n_boot"], accepted.details["min_defined"]) == (10, 10)
+    assert accepted.details["se_status"] == "ok" and np.isfinite(accepted.se)
+
+
+def test_every_classical_estimate_records_its_floor_and_whether_it_has_a_standard_error() -> None:
+    data = classical_data(2, n_texts=200, n_labelled=40)
+    for estimate in (moment_subtraction(data, "outcome"), simex(data, "outcome", n_boot=50)):
+        assert list(estimate.details)[-4:] == [
+            "min_defined",
+            "below_floor",
+            "se_status",
+            "se_exactly_zero",
+        ]
+        assert (
+            estimate.details["min_defined"],
+            estimate.details["below_floor"],
+            estimate.details["se_status"],
+        ) == (50, "refuse", "ok")

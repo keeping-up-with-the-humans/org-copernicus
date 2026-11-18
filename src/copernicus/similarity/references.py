@@ -364,7 +364,8 @@ def embed_references(refset: ReferenceSet, encoder: Encoder) -> ReferenceEmbeddi
         ``rubric_hash`` and the ``bound_with`` of the set in their sidecar.
 
     Raises:
-        ConfigurationError: If the set has no kept text.
+        ConfigurationError: If the set has no kept text, or the encoder refuses a text; its
+            message names a reference text by its position among the kept texts, from 0.
     """
     frame = refset.kept()
     if len(frame) == 0:

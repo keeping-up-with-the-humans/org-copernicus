@@ -16,6 +16,9 @@ VOCABULARY_SIZE = 4096
 PAD_ID = 0
 CLS_ID = 1
 SEP_ID = 2
+# The word that `DroppingTokenizer` drops, and the word that its decoding skips.
+DROPPED = "@"
+SPECIAL = "<eot>"
 # Valid version labels, as a real runtime records them; the local label marks them as fakes.
 FAKE_VERSIONS = {
     "resolved_revision": "fake-commit",
@@ -70,6 +73,25 @@ class BatchTokenizer(WordTokenizer):
             ids[index, places] = torch.tensor(row)
             mask[index, places] = 1
         return Batch({"input_ids": ids, "attention_mask": mask})
+
+
+class DroppingTokenizer(BatchTokenizer):
+    """The batch tokenizer without special tokens of its own, as a decoder's tokenizer is.
+
+    It drops the word `DROPPED`, as a tokenizer's normaliser drops a character, and decodes the
+    word `SPECIAL` to nothing, as a tokenizer skips its special tokens when it decodes a window.
+    """
+
+    def __init__(self, padding_side: str = "right") -> None:
+        super().__init__(padding_side=padding_side, wrap=False)
+
+    def encode(self, text: str, add_special_tokens: bool = True) -> list[int]:
+        kept = " ".join(word for word in text.split() if word != DROPPED)
+        return super().encode(kept, add_special_tokens)
+
+    def decode(self, ids: list[int], skip_special_tokens: bool = True) -> str:
+        words = super().decode(ids, skip_special_tokens).split()
+        return " ".join(word for word in words if word != SPECIAL)
 
 
 class TableModel:

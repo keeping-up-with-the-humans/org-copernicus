@@ -13,11 +13,17 @@ exception stops the battery. After the per-text entries, each variant of the cor
 ensemble pools their held-out predictions (keyed ``family:label``), with the gold classes of
 the drawn texts when they take at most five values. A fold whose held-out gold values are all
 the same has no rank validity for any entry and is skipped as ``test_fold_constant_gold``.
+Within ``run_battery`` the warnings of the cases that a fit or a combination meets on a fold
+(see ``_open_cases``) are counted by entry and size in the tables instead of being logged one by
+one; a fold run with tables of its own logs them.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cached_property
 
@@ -25,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from copernicus.baseline.folds import rng_for
+from copernicus.corrections._open_cases import gathered, summary
 from copernicus.corrections.battery_metrics import (
     FoldMetrics,
     FoldOutcome,
@@ -54,7 +61,15 @@ from copernicus.validity.metrics import is_constant
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MODE_MAX_CLASSES", "Order", "Point", "Row", "Tables", "run_fold"]
+__all__ = [
+    "MODE_MAX_CLASSES",
+    "Order",
+    "Point",
+    "Row",
+    "Tables",
+    "run_fold",
+    "warn_counted_cases",
+]
 
 MODE_MAX_CLASSES = 5
 
@@ -214,14 +229,41 @@ class Tables:
     tables can be sorted in the order of the settings at the end.
     """
 
-    def __init__(self, settings: BatterySettings) -> None:
-        """Start empty tables for a run with these settings."""
+    def __init__(self, settings: BatterySettings, *, count_cases: bool = False) -> None:
+        """Start empty tables for a run with these settings.
+
+        Args:
+            settings: The settings of the run.
+            count_cases: Whether the warnings of the cases that the fits and combinations meet
+                are counted in ``cases`` in place of being logged; the caller that sets it
+                logs the counts, as ``run_battery`` does.
+        """
         self.settings = settings
+        self.counts_cases = count_cases
         self.positions = {entry: index for index, entry in enumerate(settings.entries)}
         self.results: list[Row] = []
         self.skipped: list[Row] = []
         self.raw: list[Row] = []
         self.outcomes: dict[BatteryEntry, list[FoldOutcome]] = {}
+        self.cases: dict[tuple[BatteryEntry, int], Counter[str]] = {}
+
+    @contextmanager
+    def counting(self, entry: BatteryEntry, point: Point) -> Iterator[None]:
+        """Count the cases that a call of an entry meets at a point, if these tables count them.
+
+        The counts are added to those of the entry and size also when the call raises, so the
+        cases of a call that ends in an error are not lost.
+        """
+        if not self.counts_cases:
+            yield
+            return
+        with gathered() as counts:
+            try:
+                yield
+            finally:
+                if counts:
+                    key = (entry, point.order[2])
+                    self.cases[key] = self.cases.get(key, Counter()) + counts
 
     def skip(self, entry: BatteryEntry, point: Point, fold: int, reason: str) -> None:
         """Record that an entry was not scored on a fold (or, with fold -1, at a point)."""
@@ -309,7 +351,8 @@ def run_fold(
     members: dict[str, pd.Series] = {}
     for entry, correction in corrections.items():
         rng = rng_for(point.seed, point.scheme, point.label, index, entry.family)
-        fitted = _fit_entry(correction, fold, rng, tables.settings.covariate_scale)
+        with tables.counting(entry, point):
+            fitted = _fit_entry(correction, fold, rng, tables.settings.covariate_scale)
         if isinstance(fitted, Skip):
             tables.skip(entry, point, index, fitted.reason)
             continue
@@ -317,8 +360,38 @@ def run_fold(
         tables.outcomes.setdefault(entry, []).append(outcome)
         members[entry.key] = test_predictions
     for entry in tables.settings.ensemble_entries:
-        combined = _combine_entry(entry, members, fold)
+        with tables.counting(entry, point):
+            combined = _combine_entry(entry, members, fold)
         if isinstance(combined, Skip):
             tables.skip(entry, point, index, combined.reason)
             continue
         tables.outcomes.setdefault(entry, []).append(combined)
+
+
+def warn_counted_cases(tables: Tables, log: logging.Logger, *, finished: bool) -> None:
+    """One warning for each entry and size, in the order of the settings, whose calls met cases.
+
+    Args:
+        tables: The tables of a battery that counted the cases of its calls.
+        log: The logger of the battery.
+        finished: Whether the battery ran to its end. One that stopped with an error returns no
+            table, so the warning then says that in place of where the records are.
+    """
+    ending = (
+        "the provenance of each scored fold holds the records of its fit"
+        if finished
+        else "the battery stopped with an error after these fits and returns no table"
+    )
+    for entry in tables.settings.entries:
+        for size_index, size in enumerate(tables.settings.sizes):
+            counts = tables.cases.get((entry, size_index))
+            if counts:
+                log.warning(
+                    "battery, entry %s/%s, size %s: of the warnings that its fits log one by one "
+                    "when called on their own, %s; %s",
+                    entry.family,
+                    entry.label,
+                    size_label(size),
+                    summary(counts),
+                    ending,
+                )

@@ -136,8 +136,8 @@ class MisclassificationFitted:
             ``raw``, the share of each predicted class keyed by the class value. For exactly
             two classes also ``rogan_gladen`` (the corrected share of the larger class,
             clipped to ``[0, 1]``, or NaN with ``rogan_gladen_note`` when sensitivity minus
-            the false-positive rate is 0), ``sensitivity`` and ``specificity`` (the smoothed
-            rates of the training rows).
+            the false-positive rate is at most ``1e-12`` in absolute value), ``sensitivity``
+            and ``specificity`` (the smoothed rates of the training rows).
 
         Raises:
             ConfigurationError: If no id is given or an id is not in the data.

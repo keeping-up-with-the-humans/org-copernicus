@@ -11,7 +11,15 @@ from typing import Annotated, Any
 import pandas as pd
 import typer
 
-from copernicus.baseline import BaselineResult, BaselineSettings, curves, run_ridge_baseline
+from copernicus.baseline import (
+    BaselineResult,
+    BaselineSettings,
+    BaselineSplits,
+    curves,
+    read_splits,
+    run_ridge_baseline,
+)
+from copernicus.baseline import write_splits as save_splits
 from copernicus.cli._embedding_options import (
     GroupColumn,
     TextColumn,
@@ -23,6 +31,7 @@ from copernicus.cli._inputs import TEXT_ID, GoldOption, parse_pairs, read_gold
 from copernicus.cli._logging import Verbose, cli_logging
 from copernicus.cli._options import cli_errors
 from copernicus.cli._output import (
+    SUFFIX_PARQUET,
     check_table_output,
     format_rows,
     write_description,
@@ -40,6 +49,7 @@ __all__ = ["baseline_app"]
 DEFAULTS = BaselineSettings()
 ANALYSIS = "NLP-ML baseline"
 FULL = "full"
+SIBLINGS = ("oof", "skipped", "curves")
 SIZES_DEFAULT = ",".join(str(size) for size in DEFAULTS.sizes)
 SEEDS_DEFAULT = ",".join(str(seed) for seed in DEFAULTS.seeds)
 baseline_app = typer.Typer(
@@ -68,6 +78,29 @@ def parse_seeds(value: str) -> tuple[int, ...]:
     return tuple(int(part) for part in parts)
 
 
+def check_parquet_seeds(out: Path, seeds: tuple[int, ...]) -> None:
+    """Refuse parquet tables for seeds that no 64-bit integer type holds, before any fit.
+
+    Seeds from ``-2**63`` to ``2**63 - 1`` fit the signed 64-bit type and seeds from 0 to
+    ``2**64 - 1`` the unsigned one. Seeds that fit neither type together stay Python integers
+    in the tables of the run, which the parquet writer cannot store as an integer column.
+
+    Raises:
+        SettingsError: Naming the seeds, if the output is a parquet file and they fit neither
+            type.
+    """
+    signed = all(-(2**63) <= seed < 2**63 for seed in seeds)
+    unsigned = all(0 <= seed < 2**64 for seed in seeds)
+    if out.suffix != SUFFIX_PARQUET or signed or unsigned:
+        return
+    raise SettingsError(
+        f"--seeds {','.join(str(seed) for seed in seeds)}: these seeds fit no single 64-bit "
+        "integer type (all from -2**63 to 2**63 - 1, or all from 0 to 2**64 - 1), so a parquet "
+        "file has no integer column for them; give --out a .csv file, which keeps every digit, "
+        "or choose seeds within one of the two ranges"
+    )
+
+
 def read_coder_scores(path: Path, column: str) -> pd.Series:
     """Read a coder score per text from a file with ``text_id`` and the score column.
 
@@ -91,12 +124,48 @@ def sibling(out: Path, label: str) -> Path:
     return out.with_name(f"{out.stem}_{label}{out.suffix}")
 
 
+def check_splits_output(target: Path, out: Path) -> None:
+    """Refuse a ``--write-splits`` file that cannot be written, before any work is done.
+
+    Args:
+        target: The file to write the splits to.
+        out: The results file of the run.
+
+    Raises:
+        SettingsError: If the folder of the file does not exist, or the file is the results
+            file, one of its three tables or its description.
+    """
+    if not target.parent.is_dir():
+        raise SettingsError(f"folder of the --write-splits file does not exist: {target.parent}")
+    outputs = [out, *(sibling(out, label) for label in SIBLINGS), out.with_name(out.name + ".json")]
+    if target.resolve() in {path.resolve() for path in outputs}:
+        raise SettingsError(
+            f"--write-splits must name a file other than the results, its three tables and its "
+            f"description; got {target}"
+        )
+
+
+def supplied_record(path: Path | None, splits: BaselineSplits | None) -> dict[str, Any]:
+    """Record what a run was given: the splits file, and whether folds and draws were supplied.
+
+    A draws table counts as supplied also when it is empty or holds only draws that the run
+    does not use.
+    """
+    return {
+        "file": None if path is None else str(path),
+        "folds": splits is not None,
+        "draws": splits is not None and splits.draws is not None,
+    }
+
+
 def describe_run(
     result: BaselineResult,
     embedded: Mapping[str, tuple[Path, EmbeddingSet]],
     inputs: Mapping[str, str | None],
     text_columns: Mapping[str, str | None],
     tables: Mapping[str, Path],
+    splits: Mapping[str, Any],
+    written_splits: Path | None,
 ) -> dict[str, Any]:
     """Describe a baseline run for the file written beside the results.
 
@@ -106,11 +175,14 @@ def describe_run(
         inputs: Paths of the text, gold and coder-score files, and the score column.
         text_columns: The columns read from the texts file.
         tables: The sibling tables written beside the results, by label.
+        splits: The splits file the run read (``file``, or ``None``) and whether folds and a
+            draws table were supplied (``folds``, ``draws``).
+        written_splits: The file the run wrote its folds and consulted draws to, or ``None``.
 
     Returns:
         JSON values: the settings, the gold and unit columns, the binary decision, the
-        inputs, the encoder identity of every embedding set, the tables, the library
-        version and the creation time.
+        inputs, the encoder identity of every embedding set, the tables, the supplied and
+        the written splits, the library version and the creation time.
     """
     return {
         "analysis": ANALYSIS,
@@ -129,6 +201,8 @@ def describe_run(
             for name, (stem, loaded) in embedded.items()
         },
         "tables": {label: str(path) for label, path in tables.items()},
+        "supplied_splits": dict(splits),
+        "written_splits": None if written_splits is None else str(written_splits),
         "n_results": len(result.results),
         "n_skipped": len(result.skipped),
         **library_stamp(),
@@ -210,6 +284,25 @@ def ridge(
     coder_score_column: Annotated[
         str, typer.Option("--coder-score-column", help="Score column of --coder-scores.")
     ] = "score",
+    splits: Annotated[
+        Path | None,
+        typer.Option(
+            "--splits",
+            exists=True,
+            dir_okay=False,
+            help="A splits file, as --write-splits writes it: its folds, and its draws unless "
+            "it holds none, take the place of the keyed generators.",
+        ),
+    ] = None,
+    write_splits: Annotated[
+        Path | None,
+        typer.Option(
+            "--write-splits",
+            dir_okay=False,
+            help="Write the folds and the training draws that the run consulted to this JSON "
+            "file, which --splits reads back.",
+        ),
+    ] = None,
     text_id_column: TextIdColumn = TEXT_ID,
     text_column: TextColumn = "text",
     group_column: GroupColumn = None,
@@ -222,9 +315,16 @@ def ridge(
     <stem>_oof: out-of-fold predictions; <stem>_skipped: skipped sizes; <stem>_curves: curves.
 
     The settings, the inputs and the encoder of each embedding set go to <out>.json.
+
+    --splits reads the folds, and the draws unless it holds none, from a splits file.
+
+    --write-splits writes the folds and draws that the run consulted, which --splits reads back.
     """
     with cli_logging(verbose), cli_errors():
         check_table_output(out)
+        check_parquet_seeds(out, parse_seeds(seeds))
+        if write_splits is not None:
+            check_splits_output(write_splits, out)
         pairs = parse_pairs(embeddings or [], "--embeddings", "NAME=STEM")
         if not pairs:
             raise SettingsError("give at least one --embeddings NAME=STEM")
@@ -237,6 +337,7 @@ def ridge(
             "binary": binary,
         }
         settings = BaselineSettings(**options)
+        supplied = None if splits is None else read_splits(splits)
         embedded = {
             name: (Path(stem), EmbeddingSet.load(stem, expect_encoder=name)) for name, stem in pairs
         }
@@ -251,9 +352,10 @@ def ridge(
             gold_column=gold_column,
             unit_id=unit_id,
             coder_score=score,
+            splits=supplied,
         )
         curve_table = curves(result)
-        tables = {name: sibling(out, name) for name in ("oof", "skipped", "curves")}
+        tables = {name: sibling(out, name) for name in SIBLINGS}
         files = {
             "results": (out, result.results),
             "out-of-fold file": (tables["oof"], result.oof_predictions),
@@ -262,6 +364,8 @@ def ridge(
         }
         for path, frame in files.values():
             write_table(frame, path)
+        if write_splits is not None:
+            save_splits(result.splits, write_splits)
         inputs = {
             "texts": str(texts),
             "gold": str(gold),
@@ -269,11 +373,14 @@ def ridge(
             "coder_score_column": coder_score_column if coder_scores else None,
         }
         columns = {TEXT_ID: text_id_column, "text": text_column, "group_id": group_column}
+        record = supplied_record(splits, supplied)
         description = write_description(
-            out, describe_run(result, embedded, inputs, columns, tables)
+            out, describe_run(result, embedded, inputs, columns, tables, record, write_splits)
         )
         rows = [("results", str(len(result.results))), ("skipped", str(len(result.skipped)))]
         rows += [(label, str(path)) for label, (path, _) in files.items()]
+        if write_splits is not None:
+            rows.append(("splits file", str(write_splits)))
         rows.append(("description file", str(description)))
         typer.echo(format_rows(rows))
         if len(curve_table):

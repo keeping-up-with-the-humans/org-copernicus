@@ -52,7 +52,7 @@ class EncoderSpec:
         name: Short name; the registry key, or the Hugging Face id for an ad-hoc encoder.
         hf_id: Hugging Face model id (or a local path) the weights are loaded from.
         pooling: How token vectors become one vector: ``"mean"`` over the attended
-            tokens, ``"cls"`` for the first token, ``"last_token"`` for the last
+            tokens, ``"cls"`` for the first attended token, ``"last_token"`` for the last
             attended token.
         max_tokens: Window of the encoder in tokens; longer texts are split into
             consecutive windows.

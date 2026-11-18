@@ -37,6 +37,7 @@ from copernicus.coders.render import (
     user_message_for_text,
 )
 from copernicus.coders.results import (
+    MAX_ABSOLUTE_VALUE,
     construct_scores,
     export_construct_scores,
     export_evidence,
@@ -80,6 +81,7 @@ from copernicus.coders.two_stage import (
 )
 
 __all__ = [
+    "MAX_ABSOLUTE_VALUE",
     "MIN_FUZZY_WORDS",
     "VERIFIED_EXACT",
     "VERIFIED_FUZZY",

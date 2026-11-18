@@ -8,6 +8,7 @@ from typing import Annotated
 
 import typer
 
+from copernicus._io import json_ready
 from copernicus.cli._embedding_options import (
     BATCH_SIZE,
     CHECKPOINT_EVERY,
@@ -217,6 +218,13 @@ def score(
         typer.echo(format_rows([*rows, ("description file", str(description))]))
 
 
+def _shown(value: object) -> str:
+    """A value of the evidence summary as printed: a mean to one decimal, a missing one as none."""
+    if value is None:
+        return "none"
+    return f"{value:.1f}" if isinstance(value, float) else str(value)
+
+
 @hybrid_app.command("score")
 def score_hybrid_command(
     store: Annotated[
@@ -287,11 +295,11 @@ def score_hybrid_command(
             checkpoint_every=checkpoint_every,
         )
         write_table(result.frame, out)
-        description = write_description(out, {**result.provenance, "summary": result.summary})
+        # A mean of no evidence text is NaN: null in the description, "none" in the summary.
+        summary = json_ready(result.summary)
+        description = write_description(out, {**result.provenance, "summary": summary})
         counts = [
-            (key, f"{value:.1f}" if isinstance(value, float) else str(value))
-            for key, value in result.summary.items()
-            if not isinstance(value, dict)
+            (key, _shown(value)) for key, value in summary.items() if not isinstance(value, dict)
         ]
         files = [("rows", str(len(result.frame))), ("file", str(out))]
         typer.echo(format_rows([*counts, *files, ("description file", str(description))]))

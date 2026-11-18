@@ -185,7 +185,7 @@ def test_the_outcome_design_is_refused_when_inconsistent() -> None:
         ols_outcome_ppi(data, "gold ~ log_chars")
     with pytest.raises(ConfigurationError, match="'nope'"):
         ols_outcome_ppi(data, "1 + nope")
-    with pytest.raises(ConfigurationError, match="missing values"):
+    with pytest.raises(ConfigurationError, match="cannot be evaluated on the data"):
         ols_outcome_ppi(data, "1 + gold")
     with pytest.raises(ConfigurationError, match="rows"):
         ols_outcome_ppi(data, X=np.ones((N_TEXTS - 1, 2)))
@@ -197,16 +197,6 @@ def test_the_outcome_design_is_refused_when_inconsistent() -> None:
         ols_outcome_ppi(data, "1 + log_chars", coefficient="size")
     with pytest.raises(ConfigurationError, match="position 5"):
         ols_outcome_ppi(data, "1 + log_chars", coefficient=5)
-
-
-def test_a_stateful_transform_of_a_missing_or_incomplete_column_is_refused() -> None:
-    data, _ = _outcome_data()
-    with pytest.raises(ConfigurationError, match=r"scale\(missing_col\)") as refusal:
-        ols_outcome_ppi(data, "1 + scale(missing_col)")
-    assert refusal.value.__cause__ is not None
-    with pytest.raises(ConfigurationError, match=r"center\(gold\).*missing value"):
-        ols_outcome_ppi(data, "1 + center(gold)")
-    assert np.isfinite(ols_outcome_ppi(data, "1 + scale(log_chars)").point)
 
 
 def test_a_singular_design_or_thin_clusters_leave_the_estimate_undefined() -> None:

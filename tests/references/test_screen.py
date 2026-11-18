@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pandas as pd
 
 from copernicus.references import leakage_terms, screen_report, screen_texts
@@ -100,10 +102,17 @@ def test_the_report_counts_hits_per_term_and_the_share_screened_out() -> None:
     }
 
 
-def test_the_report_of_an_empty_frame_has_a_zero_share() -> None:
+def test_the_report_of_an_empty_frame_has_no_share_beside_its_zero_counts() -> None:
     report = screen_report(screen_texts(frame_of([]), ["tone"]))
-    assert report["share_screened_out"] == 0.0
-    assert report["by_term"] == {}
+    assert list(report) == ["n_texts", "n_screened_out", "share_screened_out", "by_term"]
+    assert (report["n_texts"], report["n_screened_out"], report["by_term"]) == (0, 0, {})
+    share = report["share_screened_out"]
+    assert isinstance(share, float) and math.isnan(share)
+
+
+def test_a_frame_without_a_flagged_text_has_a_share_of_zero() -> None:
+    report = screen_report(screen_texts(frame_of(["plain", "words"]), ["tone"]))
+    assert report == {"n_texts": 2, "n_screened_out": 0, "share_screened_out": 0.0, "by_term": {}}
 
 
 def test_the_frame_columns_end_with_the_screen_columns() -> None:
